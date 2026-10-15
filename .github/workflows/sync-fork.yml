@@ -1,19 +1,45 @@
-# .github/workflows/sync-fork.yml
-name: Sync fork from upstream
+name: Sync fork with upstream
+
 on:
   schedule:
-    - cron: "0 */6 * * *"   # 每 6 小时自动同步一次
-  workflow_dispatch:        # 也可手动点运行
+    - cron: "0 */6 * * *"   # 每 6 小时
+  workflow_dispatch:
+
 permissions:
   contents: write
+
+concurrency:
+  group: sync-fork
+  cancel-in-progress: false
+
 jobs:
   sync:
     runs-on: ubuntu-latest
     steps:
-      - name: Fast-forward fork to upstream
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.SYNC_TOKEN }}   # 必须带 workflow 作用域的令牌
+
+      - name: Merge upstream into fork
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.SYNC_TOKEN }}
         run: |
-          gh api --method POST \
-            "repos/${{ github.repository }}/merge-upstream" \
-            -f branch="${{ github.event.repository.default_branch }}"
+          set -euo pipefail
+
+          FORK_BRANCH="${{ github.event.repository.default_branch }}"
+
+          UPSTREAM="$(gh api "repos/${GITHUB_REPOSITORY}" --jq '.parent.full_name')"
+          if [ -z "$UPSTREAM" ] || [ "$UPSTREAM" = "null" ]; then
+            echo "Not a fork or upstream not found"; exit 1
+          fi
+          UPSTREAM_BRANCH="$(gh api "repos/${UPSTREAM}" --jq '.default_branch')"
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git remote add upstream "https://github.com/${UPSTREAM}.git"
+          git fetch upstream "$UPSTREAM_BRANCH"
+
+          git merge --no-edit "upstream/${UPSTREAM_BRANCH}"
+          git push origin "HEAD:${FORK_BRANCH}"

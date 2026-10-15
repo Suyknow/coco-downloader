@@ -1,0 +1,19 @@
+# .github/workflows/sync-fork.yml
+name: Sync fork from upstream
+on:
+  schedule:
+    - cron: "0 */6 * * *"   # 每 6 小时自动同步一次
+  workflow_dispatch:        # 也可手动点运行
+permissions:
+  contents: write
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fast-forward fork to upstream
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api --method POST \
+            "repos/${{ github.repository }}/merge-upstream" \
+            -f branch="${{ github.event.repository.default_branch }}"

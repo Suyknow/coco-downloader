@@ -1,5 +1,6 @@
-import { bootstrapJianbinSession } from '../jianbin-session';
 import axios from 'axios';
+import { createJbsouSession } from '@/lib/providers/jbsou-session';
+import { validateAudioLink } from '@/lib/providers/audio-link';
 import { MusicItem, MusicProvider, PlayInfo } from '@/types/music';
 
 const BASE_URL = 'https://www.jbsou.cn/';
@@ -8,14 +9,12 @@ const REQUEST_TIMEOUT = 30000;
 const SEARCH_HEADERS = {
   'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36',
   'accept': 'application/json, text/javascript, */*; q=0.01',
-  'accept-encoding': 'gzip, deflate, br, zstd',
   'accept-language': 'zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7',
   'content-type': 'application/x-www-form-urlencoded; charset=UTF-8',
   'origin': 'https://www.jbsou.cn',
   'x-requested-with': 'XMLHttpRequest',
   'referer': 'https://www.jbsou.cn/',
 };
-
 
 type JbsouSearchItem = {
   songid?: string | number;
@@ -59,7 +58,6 @@ function normalizeSearchResponse(payload: unknown): JbsouSearchResponse {
   return payload as JbsouSearchResponse;
 }
 
-
 function isJbsouUrl(value: string) {
   try {
     return new URL(value).hostname === new URL(BASE_URL).hostname;
@@ -68,30 +66,18 @@ function isJbsouUrl(value: string) {
   }
 }
 
-function getResponseUrl(response: unknown) {
-  const request = response as { request?: { res?: { responseUrl?: string } } };
-  const resUrl = request?.request?.res?.responseUrl;
-  if (typeof resUrl === 'string' && resUrl.startsWith('http')) return resUrl;
-  const config = response as { config?: { url?: string } };
-  const configUrl = config?.config?.url;
-  return typeof configUrl === 'string' ? configUrl : '';
-}
-
 async function resolveFinalUrl(url: string, cookie?: string) {
-  const response = await axios.head(url, {
+  const verified = await validateAudioLink(url, {
     headers: {
-      'user-agent': SEARCH_HEADERS['user-agent'],
-      ...(cookie && isJbsouUrl(url) ? { cookie } : {}),
+      'User-Agent': SEARCH_HEADERS['user-agent'],
+      ...(cookie && isJbsouUrl(url) ? { Cookie: cookie } : {}),
     },
     timeout: REQUEST_TIMEOUT,
-    maxRedirects: 5,
   });
-  const resolved = getResponseUrl(response);
-  const finalUrl = resolved && resolved.startsWith('http') ? resolved : url;
-  if (isJbsouUrl(url) && isJbsouUrl(finalUrl)) {
-    throw new Error('JBSou play session was not accepted');
+  if (isJbsouUrl(url) && isJbsouUrl(verified.url)) {
+    throw new Error('煎饼未返回可用的音频直链');
   }
-  return finalUrl;
+  return verified.url;
 }
 
 function normalizeIdToUrl(id: string) {
@@ -121,7 +107,7 @@ export class JianbinProvider implements MusicProvider {
   }
 
   private async bootstrapSession() {
-    return bootstrapJianbinSession();
+    return createJbsouSession();
   }
 
   private async requestSearch(query: string, cookie: string) {

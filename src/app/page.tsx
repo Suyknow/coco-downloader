@@ -7,11 +7,12 @@ import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
 import { MusicItem } from "@/types/music";
 import { PlayerBar } from "@/components/PlayerBar";
+import { BrowserDownloadNotice } from "@/components/BrowserDownloadNotice";
 import { DownloadDrawer } from "@/components/DownloadDrawer";
 import { QualitySelectModal } from "@/components/QualitySelectModal";
 import { FullscreenPlayerDrawer } from "@/components/FullscreenPlayerDrawer";
 import { DownloadTask } from "@/types/download";
-import axios from "axios";
+import { BrowserDirectDownloadError, fetchAudioBlob } from "@/lib/browser-download";
 import { message } from "antd";
 
 async function fetchJson(url: string) {
@@ -205,10 +206,14 @@ const PROVIDER_OPTIONS = [
   { id: "jianbin-kuwo", name: "煎饼-4" },
 ];
 
+const BROWSER_HANDOFF_PROVIDERS = new Set(['gequhai', 'bodian', 'qqmp3', 'jianbin-kuwo']);
+
 export default function Home() {
   const [query, setQuery] = useState("");
   const [provider, setProvider] = useState("netease");
   const [providerMenuOpen, setProviderMenuOpen] = useState(false);
+  const providerMenuRef = useRef<HTMLDivElement | null>(null);
+  const providerButtonRef = useRef<HTMLButtonElement | null>(null);
   const [results, setResults] = useState<MusicItem[]>([]);
   const [loading, setLoading] = useState(false);
   
@@ -232,7 +237,6 @@ export default function Home() {
   // Download Manager State
   const [downloadTasks, setDownloadTasks] = useState<DownloadTask[]>([]);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
-  const [downloadEnabled, setDownloadEnabled] = useState(true);
   const [resolvingMusicId, setResolvingMusicId] = useState<string | null>(null);
   const [qualityModal, setQualityModal] = useState<QualityModalState | null>(null);
   const [selectedQualityValue, setSelectedQualityValue] = useState("");
@@ -244,19 +248,36 @@ export default function Home() {
   const [loadingMore, setLoadingMore] = useState(false);
   const activeProviderName = PROVIDER_OPTIONS.find((option) => option.id === provider)?.name || "选择渠道";
 
+  const showBrowserDownloadNotice = BROWSER_HANDOFF_PROVIDERS.has(provider) || downloadTasks.some(task =>
+    task.musicItem.provider === provider && (task.status === 'browser-ready' || task.status === 'handed-off')
+  );
+
+  useEffect(() => {
+    if (!providerMenuOpen) return;
+    const closeOutside = (event: Event) => {
+      if (event.target instanceof Node && providerMenuRef.current && !providerMenuRef.current.contains(event.target)) {
+        setProviderMenuOpen(false);
+      }
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setProviderMenuOpen(false);
+        providerButtonRef.current?.focus();
+      }
+    };
+    document.addEventListener('pointerdown', closeOutside, true);
+    document.addEventListener('focusin', closeOutside, true);
+    document.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.removeEventListener('pointerdown', closeOutside, true);
+      document.removeEventListener('focusin', closeOutside, true);
+      document.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [providerMenuOpen]);
+
   const openPlayerDrawer = () => {
     setPlayerDrawerSession((session) => session + 1);
     setPlayerDrawerOpen(true);
-  };
-
-  const openSourceUrl = async (item: MusicItem) => {
-    const res = await fetch(buildUrlRequest(item));
-    const data = await res.json();
-    if (data?.url) {
-      window.open(data.url, "_blank");
-      return;
-    }
-    throw new Error("Failed to get source url");
   };
 
   const buildShuffleOrder = (ids: string[]) => {
@@ -458,17 +479,6 @@ export default function Home() {
     };
   }, [activeMusic]);
 
-  useEffect(() => {
-    const env = (window as Window & { __COCO_ENV?: { ENABLE_DOWNLOAD?: string } }).__COCO_ENV;
-    if (env?.ENABLE_DOWNLOAD === "0") {
-      setDownloadEnabled(false);
-      return;
-    }
-    if (env?.ENABLE_DOWNLOAD === "1") {
-      setDownloadEnabled(true);
-    }
-  }, []);
-
   const executeDownload = async (task: DownloadTask) => {
     try {
       // Update status to downloading
@@ -476,52 +486,49 @@ export default function Home() {
         t.id === task.id ? { ...t, status: 'downloading' } : t
       ));
 
-      if (!downloadEnabled) {
-        await openSourceUrl(task.musicItem);
-        setDownloadTasks(prev =>
-          prev.map(t => (t.id === task.id ? { ...t, status: "completed", progress: 100 } : t))
-        );
+      const params = new URLSearchParams({
+        id: task.musicItem.id,
+        provider: task.musicItem.provider || 'netease',
+      });
+      if (task.musicItem.extra !== undefined) params.set('extra', JSON.stringify(task.musicItem.extra));
+      const response = await fetch(`/api/download?${params}`, { cache: 'no-store' });
+      const delivery = await response.json();
+      if (!response.ok || typeof delivery.url !== 'string') throw new Error(delivery.error || '下载链接获取失败');
+      const extension = String(delivery.type || '').toLowerCase();
+      const fileName = ['mp3', 'flac', 'm4a', 'aac', 'wav', 'ogg', 'opus'].includes(extension)
+        ? task.fileName.replace(/\.[^.]+$/, `.${extension}`)
+        : task.fileName;
+      setDownloadTasks(prev => prev.map(t => t.id === task.id ? { ...t, fileName, sourceUrl: delivery.url } : t));
+      let blob: Blob;
+      try {
+        blob = await fetchAudioBlob(delivery.url, (progress, receivedBytes, totalBytes) => {
+          setDownloadTasks(prev => prev.map(t => t.id === task.id ? { ...t, progress, receivedBytes, totalBytes } : t));
+        });
+      } catch (error) {
+        if (!(error instanceof BrowserDirectDownloadError)) throw error;
+        setDownloadTasks(prev => prev.map(t => t.id === task.id ? {
+          ...t, status: 'browser-ready', progress: 0, receivedBytes: undefined, totalBytes: undefined, notice: error.message,
+        } : t));
         return;
       }
 
-      const response = await axios.get(`/api/download`, {
-        params: {
-          id: task.musicItem.id,
-          provider: task.musicItem.provider || 'netease',
-          filename: task.fileName,
-          extra: task.musicItem.extra ? JSON.stringify(task.musicItem.extra) : undefined,
-        },
-        responseType: 'blob',
-        onDownloadProgress: (progressEvent) => {
-          if (progressEvent.total) {
-            const percent = (progressEvent.loaded / progressEvent.total) * 100;
-            setDownloadTasks(prev => prev.map(t => 
-              t.id === task.id ? { ...t, progress: percent } : t
-            ));
-          }
-        }
-      });
-
       // Handle completion
-      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      link.download = task.fileName;
+      link.download = fileName;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
-      window.URL.revokeObjectURL(url);
+      setTimeout(() => window.URL.revokeObjectURL(url), 60000);
 
       setDownloadTasks(prev => prev.map(t => 
-        t.id === task.id ? { ...t, status: 'completed', progress: 100 } : t
+        t.id === task.id ? { ...t, fileName, status: 'completed', progress: 100 } : t
       ));
 
     } catch (err: unknown) {
       console.error(err);
-      let errorMessage = err instanceof Error ? err.message : '下载失败';
-      if (axios.isAxiosError(err) && err.response?.data instanceof Blob) {
-        try { errorMessage = JSON.parse(await err.response.data.text()).error || errorMessage; } catch { /* Keep the original error. */ }
-      }
+      const errorMessage = err instanceof Error ? err.message : '下载失败';
       void message.error({ key: `download-${task.id}`, content: `${task.musicItem.title}：${errorMessage}`, duration: 6 });
       setDownloadTasks(prev => prev.map(t => 
         t.id === task.id ? { ...t, status: 'error', error: errorMessage } : t
@@ -773,9 +780,10 @@ export default function Home() {
 
           <form onSubmit={handleSearch} className="w-full max-w-2xl rounded-2xl border border-[#e5e2e1]/70 bg-[#f6f3f2] p-2 shadow-[0_8px_24px_rgba(0,0,0,0.04)] transition-all duration-300 focus-within:border-[#005faa]/30 focus-within:shadow-[0_12px_32px_rgba(0,0,0,0.08)] dark:border-white/10 dark:bg-[#242526]">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-              <div className="relative min-w-[168px] flex-shrink-0">
+              <div ref={providerMenuRef} className="relative min-w-[168px] flex-shrink-0">
                 <button
                   type="button"
+                  ref={providerButtonRef}
                   aria-label="渠道选择"
                   aria-haspopup="listbox"
                   aria-expanded={providerMenuOpen}
@@ -796,7 +804,8 @@ export default function Home() {
                       exit={{ opacity: 0, y: 6, scale: 0.98 }}
                       transition={{ duration: 0.14 }}
                       role="listbox"
-                      className="absolute left-0 top-[calc(100%+8px)] z-30 max-h-72 w-64 overflow-y-auto rounded-xl border border-[#c0c7d4]/45 bg-white p-1.5 shadow-[0_16px_40px_rgba(0,0,0,0.12)] dark:border-white/10 dark:bg-[#303030]"
+                      style={{ scrollbarWidth: "none", msOverflowStyle: "none" }}
+                      className="provider-menu-scroll absolute left-0 top-[calc(100%+8px)] z-30 max-h-72 w-64 overflow-y-auto rounded-xl border border-[#c0c7d4]/45 bg-white p-1.5 shadow-[0_16px_40px_rgba(0,0,0,0.12)] dark:border-white/10 dark:bg-[#303030]"
                     >
                       {PROVIDER_OPTIONS.map((option) => {
                         const selected = option.id === provider;
@@ -847,6 +856,9 @@ export default function Home() {
               </div>
             </div>
           </form>
+          {showBrowserDownloadNotice && (
+            <BrowserDownloadNotice className="mt-3 w-full max-w-2xl rounded-xl bg-[#d3e3ff]/35 px-4 py-3 dark:bg-[#003f6d]/25" />
+          )}
 
           <AnimatePresence>
             {!searched && (
@@ -903,13 +915,10 @@ export default function Home() {
                 <div
                   className={cn(
                     "mb-2 hidden gap-4 border-b border-[#c0c7d4]/30 px-4 py-2 text-xs font-medium text-[#404752] md:grid dark:text-[#c6c6c7]",
-                    downloadEnabled
-                      ? "grid-cols-[40px_minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)_120px]"
-                      : "grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)_80px]"
+                    "grid-cols-[40px_minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)_120px]"
                   )}
                 >
-                  {downloadEnabled ? (
-                    <div className="flex justify-center items-center">
+                  <div className="flex justify-center items-center">
                       <button 
                         onClick={toggleAll}
                         className={cn(
@@ -922,7 +931,6 @@ export default function Home() {
                         {selectedIds.size === results.length && results.length > 0 && <Check className="w-3.5 h-3.5" />}
                       </button>
                     </div>
-                  ) : null}
                   <div>歌曲</div>
                   <div className="hidden md:block">歌手</div>
                   <div className="hidden md:block">专辑</div>
@@ -942,14 +950,11 @@ export default function Home() {
                         onDoubleClick={() => handlePlay(item)}
                         className={cn(
                           "group flex cursor-pointer select-none items-center gap-3 overflow-hidden rounded-xl border border-[#c0c7d4]/20 bg-white p-3 shadow-[0_4px_12px_rgba(0,0,0,0.05)] transition-all duration-300 hover:bg-[#fcf9f8] hover:shadow-md active:scale-[0.99] md:grid md:gap-4 md:p-5 dark:border-white/10 dark:bg-[#242526] dark:hover:bg-[#303030]",
-                          downloadEnabled
-                            ? "md:grid-cols-[40px_minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)_120px]"
-                            : "md:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)_80px]",
+                          "md:grid-cols-[40px_minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)_120px]",
                           isActive && "border-[#005faa]/30 bg-[#d3e3ff]/35"
                         )}
                       >
-                        {downloadEnabled ? (
-                          <div className="flex justify-center items-center">
+                        <div className="flex justify-center items-center">
                             <button 
                               onClick={(e) => { e.stopPropagation(); toggleSelection(item.id); }}
                               className={cn(
@@ -962,7 +967,6 @@ export default function Home() {
                               {isSelected && <Check className="w-3.5 h-3.5" />}
                             </button>
                           </div>
-                        ) : null}
 
                         <div className="flex min-w-0 flex-1 items-center gap-3 overflow-hidden md:flex-none">
                           <div 
@@ -1032,15 +1036,13 @@ export default function Home() {
                             )}
                           </button>
                           <SourceLinkButton item={item} />
-                          {downloadEnabled ? (
-                            <button
+                          <button
                               onClick={(e) => { e.stopPropagation(); requestDownloadOne(item); }}
                               className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-full bg-[#005faa] text-white shadow-sm transition-all hover:bg-[#0078d4] hover:shadow-md active:scale-95"
                               title="下载"
                             >
                               <Download className="w-5 h-5" />
                             </button>
-                          ) : null}
                         </div>
                       </motion.div>
                     );
@@ -1073,16 +1075,15 @@ export default function Home() {
         </div>
       </div>
 
-      {downloadEnabled ? (
-        <DownloadDrawer
+      <DownloadDrawer
           isOpen={isDrawerOpen}
           onOpen={() => setIsDrawerOpen(true)}
           onClose={() => setIsDrawerOpen(false)}
           tasks={downloadTasks}
+          onBrowserHandoff={(taskId) => setDownloadTasks(prev => prev.map(t => t.id === taskId ? { ...t, status: 'handed-off' } : t))}
           onRemoveTask={(taskId) => setDownloadTasks(prev => prev.filter(t => t.id !== taskId))}
           onClearCompleted={() => setDownloadTasks(prev => prev.filter(t => t.status === 'downloading' || t.status === 'pending'))}
         />
-      ) : null}
 
       <QualitySelectModal
         isOpen={Boolean(qualityModal)}
@@ -1113,7 +1114,7 @@ export default function Home() {
 
       {/* Floating Download Toggle Button (Bottom Right) */}
       <AnimatePresence>
-        {downloadEnabled && !isDrawerOpen && downloadTasks.length > 0 && (
+        {!isDrawerOpen && downloadTasks.length > 0 && (
           <motion.button
             initial={{ scale: 0 }}
             animate={{ scale: 1 }}
@@ -1139,7 +1140,7 @@ export default function Home() {
 
       {/* Floating Batch Action Bar */}
       <AnimatePresence>
-        {downloadEnabled && selectedIds.size > 0 && (
+        {selectedIds.size > 0 && (
           <motion.div
             initial={{ y: 100, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}

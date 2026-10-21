@@ -1,6 +1,6 @@
 import axios from 'axios';
+import { validateAudioLink } from '@/lib/providers/audio-link';
 import { MusicItem, MusicProvider, PlayInfo } from '@/types/music';
-import { validateAudioLink } from '../audio-link';
 
 const SEARCH_HEADERS = {
   'accept': 'application/json, text/plain, */*',
@@ -121,18 +121,6 @@ function buildListenUrl(contentId: string, copyrightId: string, resourceType: st
   );
 }
 
-function fallbackUrl(contentId: string, copyrightId: string, toneFlag: string, resourceType: string) {
-  return (
-    'https://app.pd.nf.migu.cn/MIGUM3.0/v1.0/content/sub/listenSong.do' +
-    `?channel=mx&copyrightId=${copyrightId}` +
-    `&contentId=${contentId}` +
-    `&toneFlag=${toneFlag}` +
-    `&resourceType=${resourceType}` +
-    '&userId=15548614588710179085069' +
-    '&netType=00'
-  );
-}
-
 function buildId(contentId?: string, copyrightId?: string) {
   if (!contentId || !copyrightId) return '';
   return `${contentId}_${copyrightId}`;
@@ -204,19 +192,23 @@ export class MiguProvider implements MusicProvider {
       const sorted = [...new Map(rateFormats.map(rate => [`${rate.formatType}:${rate.resourceType}`, rate])).values()]
         .filter((rate) => rate && rate.formatType && rate.resourceType)
         .sort((a, b) => parseSize(b.size ?? b.iosSize ?? b.androidSize) - parseSize(a.size ?? a.iosSize ?? a.androidSize));
+      let lastReason = '音源未返回可用的播放地址';
       for (const rate of sorted) {
         try {
           const url = buildListenUrl(contentId, copyrightId, rate.resourceType as string, rate.formatType as string);
           const response = await axios.get(url, { headers: SEARCH_HEADERS, timeout: 15000 }).catch(() => ({ data: {} }));
           const info = response.data || {};
-          const urlFromApi = info?.data?.url || fallbackUrl(contentId, copyrightId, rate.formatType as string, rate.resourceType as string);
-          if (!urlFromApi) {
+          const urlFromApi = info?.data?.url;
+          if (typeof urlFromApi !== 'string' || !/^https?:\/\//i.test(urlFromApi)) {
+            lastReason = typeof info.info === 'string' ? info.info : lastReason;
             continue;
           }
-          const { url: fixedUrl } = await validateAudioLink(urlFromApi);
+          // Keep the signed URL and requested quality unchanged. The old
+          // fallback was an API endpoint returning JSON, not an audio file.
+          const verified = await validateAudioLink(urlFromApi, { timeout: 15000 });
           const type = MUSIC_QUALITIES[rate.formatType as string] || 'mp3';
           return {
-            url: fixedUrl,
+            url: verified.url,
             type,
             bitrate: rate.formatType,
           };
@@ -224,7 +216,7 @@ export class MiguProvider implements MusicProvider {
           continue;
         }
       }
-      throw new Error('咪咕未返回可用音频，该歌曲可能暂不可用，请尝试其他歌曲或音源');
+      throw new Error(`咪咕解析失败：${lastReason}`);
     } catch (error) {
       console.error('Migu getPlayInfo error:', error);
       throw error;

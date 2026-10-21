@@ -1,5 +1,5 @@
-import { bootstrapJianbinSession } from '@/lib/providers/jianbin-session';
 import axios from 'axios';
+import { createJbsouSession } from '@/lib/providers/jbsou-session';
 import { NextRequest, NextResponse } from 'next/server';
 
 const REQUEST_TIMEOUT = 30000;
@@ -14,7 +14,6 @@ const sessionQueues: Array<Promise<void>> = Array.from(
   () => Promise.resolve()
 );
 let sessionCursor = 0;
-
 
 function parseAssetUrl(value: string | null) {
   if (!value) return null;
@@ -48,7 +47,7 @@ async function requestNewSession() {
   let lastError: unknown;
   for (let attempt = 0; attempt <= SESSION_RETRY_LIMIT; attempt += 1) {
     try {
-      return await bootstrapJianbinSession();
+      return await createJbsouSession();
     } catch (error) {
       lastError = error;
       if (attempt < SESSION_RETRY_LIMIT) await delay(200 * (attempt + 1));

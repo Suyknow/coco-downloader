@@ -236,6 +236,15 @@ Web 实际音频与封面验证见 `desktop/diagnostics/web-provider-status-2026
 
 ## 技术栈
 
+### 服务器自动部署
+
+推送 `main` 后，`.github/workflows/docker-push.yml` 构建并发布镜像，再通过 SSH 部署该提交 SHA 对应的镜像。标签推送仅发布镜像。
+GitHub `production` Environment 需配置 `DEPLOY_HOST`、`DEPLOY_PORT`、`DEPLOY_USER`、`DEPLOY_SSH_KEY`、`DEPLOY_KNOWN_HOSTS`。
+服务器部署文件位于 `/home/ubuntu/coco-deploy`，独立 Compose 项目名为 `coco-downloader`，绑定 `127.0.0.1:3004`。
+部署会等待 HTTP 健康检查，失败时恢复旧镜像；首次迁移保留旧容器直到新服务健康。不修改同机博客或反向代理。
+SSH 密钥存放于 GitHub 加密 Secrets，仓库不保存服务器密码或私钥。
+与 MarkAI 相同，Actions 每次上传 `deploy/compose.yaml` 和 `deploy/deploy.sh`，再通过 SSH 登录镜像仓库并执行部署。
+
 ### Web
 
 - Next.js 16
@@ -277,15 +286,3 @@ Web 实际音频与封面验证见 `desktop/diagnostics/web-provider-status-2026
 ## 许可证
 
 本项目使用 MIT License。
-
-## 浏览器直连下载
-
-Web 下载统一由浏览器直接向音源请求文件。`/api/download` 仅解析并返回音频地址与格式，不再转发音频，也不需要 Worker 或额外环境变量。单曲和批量下载始终可用；旧的 `ENABLE_DOWNLOAD`、`DOWNLOAD_WORKER_URL` 和 `DOWNLOAD_WORKER_SECRET` 配置不再使用，可以从部署环境移除。
-
-网页通过流式读取统计下载进度，有可读取的文件总大小时显示百分比，否则显示已接收的 MB。接收完成后生成 Blob 并触发浏览器保存；文件会占用浏览器内存，大文件或批量任务的内存用量取决于同时进行的下载。
-
-所有音源统一尝试 HTTPS 直连。跨域或网络问题、响应超时导致网页无法接收文件时，会显示“需要浏览器处理”和“交给浏览器下载”链接。点击后显示“已交给浏览器处理”，不会标为下载完成，也无法跟踪后续进度。浏览器可能下载或打开播放页面，必要时可另存为，实际行为由浏览器和源站决定。解析失败、非音频响应或文件不完整仍显示失败原因。所有情况都不会回退到应用服务器传输音乐文件。
-
-音乐文件的路径是“音源 CDN → 用户浏览器”。应用服务器仍承担页面资源、搜索、解析 API 和少量音源探测请求的流量。
-
-煎饼四个渠道与封面请求共用新的访问会话初始化逻辑，兼容官网的 mk_visit 加载页和旧的 PHP 会话。咪咕只接受可验证的真实音频地址；接口报错时显示解析失败，不再把返回 JSON 的旧接口地址当作音频直链。

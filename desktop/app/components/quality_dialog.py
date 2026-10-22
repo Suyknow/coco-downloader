@@ -9,10 +9,6 @@ NETEASE_QUALITY_OPTIONS = [
     ("standard", "标准音质"),
     ("exhigh", "极高音质"),
     ("lossless", "无损音质"),
-    ("hires", "Hi-Res 音质"),
-    ("jyeffect", "高清环绕声"),
-    ("sky", "沉浸环绕声"),
-    ("jymaster", "超清母带"),
 ]
 
 
@@ -24,7 +20,7 @@ class NeteaseQualityDialog(MessageBoxBase):
         self.selected_level = "lossless"
         self.button_group = QButtonGroup(self)
         self.title_label = SubtitleLabel(self.tr("选择下载音质"), self)
-        self.desc_label = BodyLabel(self.tr("网易云音乐接口支持多种音质，请选择本次下载使用的音质。"), self)
+        self.desc_label = BodyLabel(self.tr("当前 Meting 渠道支持标准、极高和无损选项，实际音质以返回文件为准。"), self)
 
         self._init_widget()
 

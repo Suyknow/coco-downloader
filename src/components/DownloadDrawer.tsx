@@ -190,10 +190,10 @@ export function DownloadDrawer({
                           className="inline-flex items-center gap-1 rounded-full bg-[#005faa] px-3 py-1.5 text-xs font-medium text-white hover:bg-[#0078d4]"
                         >
                           <ExternalLink className="h-3 w-3" />
-                          {task.status === 'handed-off' ? '再次打开音频链接' : '交给浏览器下载'}
+                          {task.delivery === 'source-page' ? '前往源站下载' : task.status === 'handed-off' ? '再次打开音频链接' : '交给浏览器下载'}
                         </a>
-                        <p className="mt-1 text-xs leading-5 text-[#404752] dark:text-[#c6c6c7]">若打开播放页面，可使用浏览器菜单另存为；是否能保存取决于源站与浏览器。</p>
-                        <BrowserDownloadNotice className="mt-2" />
+                        <p className="mt-1 text-xs leading-5 text-[#404752] dark:text-[#c6c6c7]">{task.delivery === 'source-page' ? '请在源站选择网盘下载入口，按提示保存；网页无法验证后续保存结果。' : '若打开播放页面，可使用浏览器菜单另存为；是否能保存取决于源站与浏览器。'}</p>
+                        {task.delivery !== 'source-page' && <BrowserDownloadNotice className="mt-2" />}
                       </div>
                     )}
 

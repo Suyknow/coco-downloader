@@ -12,6 +12,7 @@ export interface DownloadTask {
   fileName: string;
   error?: string;
   sourceUrl?: string;
+  delivery?: 'audio' | 'source-page';
   notice?: string;
   startTime: number;
 }

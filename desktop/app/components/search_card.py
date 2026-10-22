@@ -1,10 +1,55 @@
 # coding: utf-8
 from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QFont
-from PyQt5.QtWidgets import QVBoxLayout, QHBoxLayout, QLabel
+from PyQt5.QtWidgets import QVBoxLayout, QHBoxLayout, QLabel, QToolButton, QMenu
 
-from qfluentwidgets import CaptionLabel, ComboBox, IndeterminateProgressBar, SearchLineEdit, SimpleCardWidget, setFont
-from app.services.providers import PROVIDER_DISPLAY_NAMES
+from qfluentwidgets import CaptionLabel, IndeterminateProgressBar, SearchLineEdit, SimpleCardWidget, setFont
+from app.services.providers import PROVIDER_DISPLAY_NAMES, PROVIDER_GROUPS
+
+
+class ChannelMenuButton(QToolButton):
+    """Music platform menu with a submenu for each search channel."""
+
+    currentTextChanged = pyqtSignal(str)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._provider_id = "netease"
+        self._actions = {}
+        menu = QMenu(self)
+        menu.setToolTipsVisible(True)
+        for platform, channels in PROVIDER_GROUPS.items():
+            submenu = menu.addMenu(platform)
+            submenu.setToolTipsVisible(True)
+            if not channels:
+                submenu.addAction("暂无可用渠道（解析异常，暂时停用）").setEnabled(False)
+            for label, provider_id in channels:
+                action = submenu.addAction(label)
+                action.setCheckable(True)
+                action.setChecked(provider_id == self._provider_id)
+                if provider_id == "livepoo":
+                    action.setToolTip("前往源站使用网盘保存，不支持试听或自动批量下载")
+                elif provider_id == "kugou":
+                    action.setToolTip("机房 IP 可能被拦截，建议使用本地网络客户端")
+                else:
+                    action.setToolTip("客户端支持直接下载与批量下载")
+                action.triggered.connect(lambda checked=False, key=provider_id: self._select_channel(key))
+                self._actions[provider_id] = action
+        self.setMenu(menu)
+        self.setPopupMode(QToolButton.InstantPopup)
+        self.setText("网易云音乐")
+
+    def currentData(self):
+        return self._provider_id
+
+    def _select_channel(self, provider_id):
+        self._provider_id = provider_id
+        for key, action in self._actions.items():
+            action.setChecked(key == provider_id)
+        label = next(name for name, key in PROVIDER_DISPLAY_NAMES.items() if key == provider_id)
+        self.setText(label.split(" / ", 1)[0])
+        self.setToolTip(label)
+        self.currentTextChanged.emit(label)
 
 
 class SearchCard(SimpleCardWidget):
@@ -26,9 +71,9 @@ class SearchCard(SimpleCardWidget):
 
         self.searchLayout = QHBoxLayout()
         self.searchInput = SearchLineEdit(self)
-        self.platformComboBox = ComboBox(self)
+        self.platformComboBox = ChannelMenuButton(self)
         self.progressBar = IndeterminateProgressBar(self)
-        self.previewHintLabel = CaptionLabel(self.tr("当前平台不支持试听，仅支持下载"), self)
+        self.previewHintLabel = CaptionLabel(self.tr("力音当前提供网盘入口，请前往源站保存；不支持试听或批量下载"), self)
         self.stabilityLabel = CaptionLabel(self.tr("搜索、播放与下载依赖第三方渠道的稳定性，不保证持续有效；失败时请重试或切换渠道。"), self)
         self.stabilityLabel.setWordWrap(True)
         self.stabilityLabel.setAlignment(Qt.AlignCenter)
@@ -49,11 +94,8 @@ class SearchCard(SimpleCardWidget):
         self.searchInput.setFixedHeight(40)
         self.searchInput.searchSignal.connect(self._on_search)
 
-        self.platformComboBox.setFixedWidth(205)
+        self.platformComboBox.setFixedWidth(245)
         self.platformComboBox.setFixedHeight(40)
-        for label, provider_id in PROVIDER_DISPLAY_NAMES.items():
-            self.platformComboBox.addItem(label, userData=provider_id)
-        self.platformComboBox.setCurrentIndex(0)
 
         self.searchLayout.setSpacing(12)
         self.searchLayout.addWidget(self.searchInput, 1)
@@ -110,4 +152,12 @@ class SearchCard(SimpleCardWidget):
         self.previewHintLabel.setVisible(visible)
 
     def _on_platform_changed(self, platform: str) -> None:
-        self.platformChanged.emit(self.platformComboBox.currentData())
+        provider_id = self.platformComboBox.currentData()
+        hints = {
+            "livepoo": "力音当前提供网盘入口，需前往源站保存；不支持试听或批量下载。",
+            "kugou": "90svip 可能拦截机房 IP，建议在本地网络使用客户端。",
+            "gequhai": "搜索歌曲海曲库，客户端支持直接下载和批量下载。",
+        }
+        label = next((name for name, key in PROVIDER_DISPLAY_NAMES.items() if key == provider_id), provider_id)
+        self.stabilityLabel.setText(f"{label} · {hints.get(provider_id, '客户端支持直接下载和批量下载；渠道失败时请尝试同平台的其他渠道。')}")
+        self.platformChanged.emit(provider_id)

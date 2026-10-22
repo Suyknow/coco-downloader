@@ -22,7 +22,6 @@ LOGGER = logging.getLogger(__name__)
 REQUEST_TIMEOUT = 15
 API_DOMAIN = "https://interface.music.163.com"
 LYRIC_API_URL = "https://interface3.music.163.com/eapi/song/lyric/v1"
-CENGUIGUI_PLAY_API_URL = "https://api-v2.cenguigui.cn/api/netease/music_v1.php"
 METING_API_URL = "https://api.qijieya.cn/meting/"
 EAPI_KEY = b"e82ckenh8dichen8"
 DEFAULT_LEVEL = "lossless"
@@ -30,19 +29,11 @@ VALID_LEVELS = {
     "standard",
     "exhigh",
     "lossless",
-    "hires",
-    "jyeffect",
-    "sky",
-    "jymaster",
 }
 METING_BR_BY_LEVEL = {
     "standard": "128",
     "exhigh": "320",
     "lossless": "2000",
-    "hires": "2000",
-    "jyeffect": "2000",
-    "sky": "2000",
-    "jymaster": "2000",
 }
 DEFAULT_UA = (
     "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 "
@@ -137,17 +128,7 @@ class NeteaseOfficialProvider(MusicProvider):
         level = _normalize_level((extra.get("level") or extra.get("selectedLevel")) if extra else None)
         fallback_cover = extra.get("cover") if extra and isinstance(extra.get("cover"), str) else None
 
-        try:
-            info = self._get_by_meting(song_id, level)
-        except (ProviderNetworkError, RequestException, ValueError) as primary_error:
-            LOGGER.warning("Netease Meting unavailable; trying fallback: %s", primary_error)
-            try:
-                info = self._get_by_cenguigui(song_id, level)
-            except (ProviderNetworkError, RequestException, ValueError) as fallback_error:
-                raise ValueError(
-                    f"云音乐播放链接获取失败：主线路 {primary_error}；"
-                    f"备用线路 {fallback_error}。请稍后重试或切换音源。"
-                ) from fallback_error
+        info = self._get_by_meting(song_id, level)
 
         return PlayInfo(
             url=info["url"],
@@ -244,27 +225,6 @@ class NeteaseOfficialProvider(MusicProvider):
     def _generate_device_id(self) -> str:
         alphabet = string.ascii_lowercase + string.digits
         return "".join(random.choice(alphabet) for _ in range(32))
-
-    def _get_by_cenguigui(self, song_id: str, level: str) -> dict[str, str]:
-        data = self._http.get_json(
-            CENGUIGUI_PLAY_API_URL,
-            params={"id": song_id, "type": "json", "level": level},
-            timeout=REQUEST_TIMEOUT,
-        )
-        if not isinstance(data, dict) or data.get("code") != 200:
-            raise ValueError("Cenguigui parse failed")
-
-        payload = data.get("data", {})
-        if not isinstance(payload, dict):
-            raise ValueError("Invalid cenguigui payload")
-
-        url = clean_text(str(payload.get("url", "")))
-        if not is_http_url(url):
-            raise ValueError("Invalid cenguigui url")
-
-        cover = payload.get("pic") if isinstance(payload.get("pic"), str) else ""
-        bitrate = payload.get("format") if isinstance(payload.get("format"), str) else level
-        return {"url": url, "cover": cover, "bitrate": bitrate}
 
     def _get_by_meting(self, song_id: str, level: str) -> dict[str, str]:
         br = METING_BR_BY_LEVEL.get(level, "320")

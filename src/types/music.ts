@@ -12,6 +12,7 @@ export interface MusicItem {
 export interface PlayInfo {
   url: string;
   type: 'mp3' | 'm4a' | 'flac' | string;
+  delivery?: 'audio' | 'source-page';
   bitrate?: string;
   cover?: string;
 }

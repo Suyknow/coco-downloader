@@ -1,5 +1,4 @@
 # coding: utf-8
-import json
 import logging
 import re
 from typing import Any
@@ -11,7 +10,7 @@ from app.models.music import MusicItem, PlayInfo
 
 from .base import MusicProvider
 from .http_client import ProviderHttpClient
-from .utils import absolute_url, clean_text, extract_ext, is_http_url, quote_id
+from .utils import absolute_url, clean_text, quote_id
 
 LOGGER = logging.getLogger(__name__)
 REQUEST_TIMEOUT = 15
@@ -53,17 +52,6 @@ def _parse_title(text: str) -> tuple[str, str]:
     return normalized, ""
 
 
-def _extract_cover(html: str) -> str:
-    match = re.search(r"\"music_cover\"\s*:\s*\"(.*?)\"", html)
-    if not match:
-        return ""
-    raw = match.group(1)
-    try:
-        return json.loads(f"\"{raw}\"").replace("\\/", "/")
-    except json.JSONDecodeError:
-        return raw.replace("\\/", "/")
-
-
 class LivepooProvider(MusicProvider):
     name = "livepoo"
 
@@ -80,28 +68,15 @@ class LivepooProvider(MusicProvider):
         except RequestException:
             LOGGER.exception("Livepoo search error")
             return []
-        return self._parse_search_html(html)
+        return self._parse_search_html(html)[offset:offset + limit]
 
     def get_play_info(self, song_id: str, extra: dict[str, Any] | None = None) -> PlayInfo:
-        detail_url = self._get_detail_url(song_id, extra)
-        cover = ""
-        if detail_url:
-            detail_html = self._http.get_text(detail_url, headers=HEADERS, timeout=REQUEST_TIMEOUT)
-            cover = _extract_cover(detail_html)
-        url = clean_text(
-            self._http.get_text(
-                f"https://www.livepoo.cn/audio/play?id={quote_id(song_id)}",
-                headers=HEADERS,
-                timeout=REQUEST_TIMEOUT,
-            )
-        )
-        if not is_http_url(url):
-            raise ValueError("Invalid play url")
-        return PlayInfo(
-            url=url,
-            type=extract_ext(url),
-            cover=cover or None,
-        )
+        raise ValueError("力音已改为网盘下载，请前往源站保存，不支持直接试听或自动下载")
+
+    def get_download_page(self, song_id: str) -> str:
+        if not song_id.isdigit():
+            raise ValueError("力音歌曲 ID 无效，请重新搜索")
+        return f"https://www.livepoo.cn/music/info.html?id=MUSIC_{song_id}"
 
     def _parse_search_html(self, html: str) -> list[MusicItem]:
         soup = BeautifulSoup(html, "html.parser")
@@ -147,11 +122,3 @@ class LivepooProvider(MusicProvider):
             if candidate and clean_text(candidate.get_text()):
                 return candidate.get_text()
         return anchor.get_text()
-
-    def _get_detail_url(self, song_id: str, extra: dict[str, Any] | None) -> str | None:
-        detail_url = extra.get("detailUrl") if extra and isinstance(extra.get("detailUrl"), str) else None
-        if is_http_url(detail_url):
-            return detail_url
-        if song_id:
-            return f"https://www.livepoo.cn/music/info.html?id=MUSIC_{quote_id(song_id)}"
-        return None

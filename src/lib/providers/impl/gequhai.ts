@@ -187,6 +187,7 @@ export class GequhaiProvider implements MusicProvider {
     try {
       const keyword = query.trim();
       if (!keyword) return [];
+      if (this.cookies.size === 0) await this.fetchPage(`${SITE_URL}/`);
       const url = new URL('/search', SITE_URL);
       url.searchParams.set('s', keyword);
       const html = await this.fetchPage(url.href);

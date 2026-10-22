@@ -1,8 +1,8 @@
 # coding: utf-8
 from typing import Any
 
-from PyQt5.QtCore import QThread, Qt, QSize, pyqtSignal
-from PyQt5.QtGui import QColor, QFont
+from PyQt5.QtCore import QThread, Qt, QSize, QUrl, pyqtSignal
+from PyQt5.QtGui import QColor, QFont, QDesktopServices
 from PyQt5.QtWidgets import QLabel, QWidget, QVBoxLayout
 
 from PyQt5.QtWidgets import QGraphicsDropShadowEffect
@@ -21,12 +21,12 @@ from ..services.errors import (
 )
 from ..services.music_search_service import search_music
 from ..services.thread_lifecycle import retain_thread
-from ..services.providers import PROVIDER_DISPLAY_NAMES
+from ..services.providers import PROVIDER_DISPLAY_NAMES, get_provider
 
 PAGE_SIZE = 20
 PAGED_PLATFORMS = {"netease", "qq", "kugou"}
 DOWNLOAD_ONLY_PLATFORMS = {"力音", "livepoo"}
-NETEASE_OFFICIAL_PLATFORMS = {"cenguigui", "netease"}
+NETEASE_OFFICIAL_PLATFORMS = {"netease"}
 
 
 class MusicSearchThread(QThread):
@@ -367,6 +367,13 @@ class HomeInterface(ScrollArea):
         self._request_download(item)
 
     def _request_download(self, item: MusicItem) -> None:
+        if item.provider == "livepoo":
+            url = get_provider("livepoo").get_download_page(item.id)
+            QDesktopServices.openUrl(QUrl(url))
+            InfoBar.info(title=self.tr("前往源站下载"),
+                         content=self.tr("请在力音歌曲页选择网盘入口保存，客户端无法跟踪保存结果。"),
+                         parent=self, position=InfoBarPosition.TOP, duration=6000)
+            return
         if self._is_netease_official(item.provider):
             dialog = NeteaseQualityDialog(self.window())
             if dialog.exec():
@@ -387,6 +394,12 @@ class HomeInterface(ScrollArea):
             return
         indexes = self.songListWidget.selected_song_indices()
         if not indexes:
+            return
+
+        if any(self.currentItems[index].provider == "livepoo" for index in indexes):
+            InfoBar.warning(title=self.tr("此渠道不支持批量下载"),
+                            content=self.tr("力音需前往源站逐首保存，请点击歌曲的下载按钮。"),
+                            parent=self, position=InfoBarPosition.TOP, duration=6000)
             return
 
         netease_level = None

@@ -1,22 +1,23 @@
-import { MusicProvider } from '@/types/music';
+import { At38Provider } from './impl/at38';
 import { GequhaiProvider } from './impl/gequhai';
+import { MusicProvider } from '@/types/music';
 import { BodianProvider } from './impl/bodian';
 import { QQProvider } from './impl/qq';
 import { KugouProvider } from './impl/kugou';
 import { QQMp3Provider } from './impl/qqmp3';
-import { MiguProvider } from './impl/migu';
 import { LivepooProvider } from './impl/livepoo';
 import { JianbinProvider } from './impl/jianbin';
 import { NeteaseOfficialProvider } from './impl/netease';
 
 const providers: Record<string, MusicProvider> = {
   'netease': new NeteaseOfficialProvider(),
+  'at38-netease': new At38Provider('at38-netease', 'wy'),
+  'at38-qq': new At38Provider('at38-qq', 'qq'),
   qq: new QQProvider(),
   kugou: new KugouProvider(),
-  gequhai: new GequhaiProvider(),
   bodian: new BodianProvider(),
+  gequhai: new GequhaiProvider(),
   qqmp3: new QQMp3Provider(),
-  migu: new MiguProvider(),
   livepoo: new LivepooProvider(),
   'jianbin-netease': new JianbinProvider('jianbin-netease', 'netease'),
   'jianbin-qq': new JianbinProvider('jianbin-qq', 'qq'),
@@ -25,7 +26,9 @@ const providers: Record<string, MusicProvider> = {
 };
 
 export function getProvider(name: string = 'netease'): MusicProvider {
-  return providers[name] || providers['netease'];
+  const provider = Object.hasOwn(providers, name) ? providers[name] : undefined;
+  if (!provider) throw new Error('该渠道已下架或不存在，请重新选择音乐平台与渠道');
+  return provider;
 }
 
 export function getAllProviders(): MusicProvider[] {

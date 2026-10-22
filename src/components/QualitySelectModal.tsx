@@ -107,7 +107,7 @@ export function QualitySelectModal({
 
               <div className="mt-6 flex items-center justify-between gap-3">
                 <div className="text-xs leading-5 text-slate-400 dark:text-slate-500">
-                  不支持所选选项的曲目会自动回退到该曲可用的最佳方案。
+                  使用当前选定的渠道获取音频；实际音质以渠道返回的文件为准。
                 </div>
                 <button
                   type="button"

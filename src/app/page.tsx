@@ -2,11 +2,13 @@
 
 import React, { useState, useRef, useEffect } from "react";
 import Image from "next/image";
-import { Search, Loader2, Play, Pause, Download, Check, Music, Trash2, ExternalLink, ChevronDown, ArrowRight } from "lucide-react";
+import { Search, Loader2, Play, Pause, Download, Check, Music, Trash2, ExternalLink, ArrowRight } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
 import { MusicItem } from "@/types/music";
 import { PlayerBar } from "@/components/PlayerBar";
+import { ChannelSelect } from "@/components/ChannelSelect";
+import { getMusicChannel, getMusicPlatform, supportsBatchDownload } from "@/lib/music-channels";
 import { BrowserDownloadNotice } from "@/components/BrowserDownloadNotice";
 import { DownloadDrawer } from "@/components/DownloadDrawer";
 import { QualitySelectModal } from "@/components/QualitySelectModal";
@@ -191,29 +193,9 @@ const SourceLinkButton = ({ item }: { item: MusicItem }) => {
 type PlayMode = "order" | "shuffle" | "single";
 const SEARCH_PAGE_SIZE = 20;
 
-const PROVIDER_OPTIONS = [
-  { id: "netease", name: "云音乐" },
-  { id: "qq", name: "QQ音乐（VKeys）" },
-  { id: "kugou", name: "酷狗音乐（90svip）" },
-  { id: "gequhai", name: "歌曲海" },
-  { id: "bodian", name: "波点" },
-  { id: "qqmp3", name: "QQMP3" },
-  { id: "migu", name: "咪咕" },
-  { id: "livepoo", name: "力音" },
-  { id: "jianbin-netease", name: "煎饼-1" },
-  { id: "jianbin-qq", name: "煎饼-2" },
-  { id: "jianbin-kugou", name: "煎饼-3" },
-  { id: "jianbin-kuwo", name: "煎饼-4" },
-];
-
-const BROWSER_HANDOFF_PROVIDERS = new Set(['gequhai', 'bodian', 'qqmp3', 'jianbin-kuwo']);
-
 export default function Home() {
   const [query, setQuery] = useState("");
   const [provider, setProvider] = useState("netease");
-  const [providerMenuOpen, setProviderMenuOpen] = useState(false);
-  const providerMenuRef = useRef<HTMLDivElement | null>(null);
-  const providerButtonRef = useRef<HTMLButtonElement | null>(null);
   const [results, setResults] = useState<MusicItem[]>([]);
   const [loading, setLoading] = useState(false);
   
@@ -246,34 +228,20 @@ export default function Home() {
   const [lyricLoading, setLyricLoading] = useState(false);
   const [hasMoreResults, setHasMoreResults] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
-  const activeProviderName = PROVIDER_OPTIONS.find((option) => option.id === provider)?.name || "选择渠道";
-
-  const showBrowserDownloadNotice = BROWSER_HANDOFF_PROVIDERS.has(provider) || downloadTasks.some(task =>
-    task.musicItem.provider === provider && (task.status === 'browser-ready' || task.status === 'handed-off')
+  const activeChannel = getMusicChannel(provider);
+  const activePlatform = getMusicPlatform(provider);
+  const batchSupported = supportsBatchDownload(provider);
+  const showBrowserDownloadNotice = activeChannel?.download === 'browser' || downloadTasks.some(task =>
+    task.musicItem.provider === provider && task.delivery !== 'source-page' && (task.status === 'browser-ready' || task.status === 'handed-off')
   );
 
-  useEffect(() => {
-    if (!providerMenuOpen) return;
-    const closeOutside = (event: Event) => {
-      if (event.target instanceof Node && providerMenuRef.current && !providerMenuRef.current.contains(event.target)) {
-        setProviderMenuOpen(false);
-      }
-    };
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setProviderMenuOpen(false);
-        providerButtonRef.current?.focus();
-      }
-    };
-    document.addEventListener('pointerdown', closeOutside, true);
-    document.addEventListener('focusin', closeOutside, true);
-    document.addEventListener('keydown', closeOnEscape);
-    return () => {
-      document.removeEventListener('pointerdown', closeOutside, true);
-      document.removeEventListener('focusin', closeOutside, true);
-      document.removeEventListener('keydown', closeOnEscape);
-    };
-  }, [providerMenuOpen]);
+  const changeChannel = (id: string) => {
+    setProvider(id);
+    setResults([]);
+    setSelectedIds(new Set());
+    setHasMoreResults(false);
+    setSearched(false);
+  };
 
   const openPlayerDrawer = () => {
     setPlayerDrawerSession((session) => session + 1);
@@ -357,6 +325,10 @@ export default function Home() {
 
   const playRequestRef = useRef(0);
   const handlePlay = async (item: MusicItem) => {
+    if (getMusicChannel(item.provider)?.preview === false) {
+      void message.info('此渠道仅提供网盘下载，请前往源站保存，暂不支持试听');
+      return;
+    }
     if (resolvingMusicId === item.id) return;
     const requestId = ++playRequestRef.current;
     const audio = audioRef.current;
@@ -376,6 +348,7 @@ export default function Home() {
       const preview = { ...item, extra: { ...(item.extra as Record<string, unknown> || {}), usage: 'playback' } };
       const data = await fetchJson(buildUrlRequest(preview));
       if (requestId !== playRequestRef.current) return;
+      if (data.delivery === 'source-page') throw new Error('此渠道仅提供源站下载，不支持试听');
       if (!data.url) throw new Error(data.error || '渠道未返回播放链接');
       if (data.cover) setActiveMusic({ ...item, cover: data.cover });
       audio.src = data.url;
@@ -479,7 +452,7 @@ export default function Home() {
     };
   }, [activeMusic]);
 
-  const executeDownload = async (task: DownloadTask) => {
+  const executeDownload = async (task: DownloadTask, browserWindow?: Window | null, handoffImmediately = false) => {
     try {
       // Update status to downloading
       setDownloadTasks(prev => prev.map(t => 
@@ -498,6 +471,24 @@ export default function Home() {
       const fileName = ['mp3', 'flac', 'm4a', 'aac', 'wav', 'ogg', 'opus'].includes(extension)
         ? task.fileName.replace(/\.[^.]+$/, `.${extension}`)
         : task.fileName;
+      const sourcePage = delivery.delivery === 'source-page';
+      if (sourcePage || getMusicChannel(task.musicItem.provider)?.download === 'browser') {
+        if (handoffImmediately) {
+          if (browserWindow && !browserWindow.closed) {
+            browserWindow.location.replace(delivery.url);
+          } else {
+            // If popups are blocked or the reserved tab was closed, hand off
+            // in this tab so downloading never requires another button click.
+            window.location.assign(delivery.url);
+          }
+        }
+        setDownloadTasks(prev => prev.map(t => t.id === task.id ? {
+          ...t, fileName, sourceUrl: delivery.url, delivery: sourcePage ? 'source-page' : 'audio',
+          status: handoffImmediately ? 'handed-off' : 'browser-ready',
+          notice: sourcePage ? '请在源站选择网盘入口保存，网页无法跟踪后续进度。' : '已交给浏览器处理，网页无法跟踪后续进度。',
+        } : t));
+        return;
+      }
       setDownloadTasks(prev => prev.map(t => t.id === task.id ? { ...t, fileName, sourceUrl: delivery.url } : t));
       let blob: Blob;
       try {
@@ -527,6 +518,7 @@ export default function Home() {
       ));
 
     } catch (err: unknown) {
+      if (browserWindow && !browserWindow.closed) browserWindow.close();
       console.error(err);
       const errorMessage = err instanceof Error ? err.message : '下载失败';
       void message.error({ key: `download-${task.id}`, content: `${task.musicItem.title}：${errorMessage}`, duration: 6 });
@@ -550,11 +542,21 @@ export default function Home() {
 
   const startSingleDownload = async (item: MusicItem) => {
     const newTask = createTask(item);
+    const downloadMode = getMusicChannel(item.provider)?.download;
+    const browserDownload = downloadMode === 'browser' || downloadMode === 'source-page';
+    // Reserve the tab during the click gesture, before URL resolution awaits
+    // the server; opening it afterward can trigger popup blocking.
+    const browserWindow = browserDownload ? window.open('about:blank', '_blank') : undefined;
+    if (browserWindow) {
+      browserWindow.opener = null;
+      browserWindow.document.title = '正在准备下载';
+      browserWindow.document.body.textContent = '正在获取下载链接，请稍候…';
+    }
 
     setDownloadTasks(prev => [newTask, ...prev]);
-    setIsDrawerOpen(true);
-    
-    await executeDownload(newTask);
+    if (!browserDownload) setIsDrawerOpen(true);
+
+    await executeDownload(newTask, browserWindow, browserDownload);
   };
 
   const toggleSelection = (id: string) => {
@@ -580,7 +582,7 @@ export default function Home() {
     if (qualityItems.length === 0) return false;
     const options = collectQualityOptions(qualityItems);
     if (options.length === 0) return false;
-    const optionKind = qualityItems.some((item) => item.provider === "qq" || item.provider === "kugou") ? "downloadSource" : "quality";
+    const optionKind = "quality" as const;
     setSelectedQualityValue(buildQualityValue(getProviderExtra(qualityItems[0])) || options[0].value);
     setQualityModal({
       mode,
@@ -592,6 +594,10 @@ export default function Home() {
   };
 
   const startBatchDownload = async (items: MusicItem[]) => {
+    if (items.some(item => !supportsBatchDownload(item.provider))) {
+      void message.info('所选渠道需逐首交给浏览器下载，不支持网页自动批量下载；可使用客户端');
+      return;
+    }
     if (items.length > 5) {
       if (!confirm(`即将下载 ${items.length} 首歌曲，可能需要一些时间，是否继续？`)) return;
     }
@@ -635,11 +641,16 @@ export default function Home() {
   };
 
   const requestDownloadOne = async (item: MusicItem) => {
-    if (openQualityModal([item], "single")) return;
+    const downloadMode = getMusicChannel(item.provider)?.download;
+    if (downloadMode !== 'browser' && downloadMode !== 'source-page' && openQualityModal([item], "single")) return;
     await startSingleDownload(item);
   };
 
   const handleBatchDownload = async () => {
+    if (!batchSupported) {
+      void message.info('当前渠道不支持网页自动批量下载，请逐首下载或使用客户端');
+      return;
+    }
     const items = results.filter(r => selectedIds.has(r.id));
     if (items.length === 0) return;
     if (openQualityModal(items, "batch")) return;
@@ -780,61 +791,7 @@ export default function Home() {
 
           <form onSubmit={handleSearch} className="w-full max-w-2xl rounded-2xl border border-[#e5e2e1]/70 bg-[#f6f3f2] p-2 shadow-[0_8px_24px_rgba(0,0,0,0.04)] transition-all duration-300 focus-within:border-[#005faa]/30 focus-within:shadow-[0_12px_32px_rgba(0,0,0,0.08)] dark:border-white/10 dark:bg-[#242526]">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-              <div ref={providerMenuRef} className="relative min-w-[168px] flex-shrink-0">
-                <button
-                  type="button"
-                  ref={providerButtonRef}
-                  aria-label="渠道选择"
-                  aria-haspopup="listbox"
-                  aria-expanded={providerMenuOpen}
-                  onClick={() => setProviderMenuOpen((open) => !open)}
-                  className={cn(
-                    "flex h-12 w-full cursor-pointer items-center justify-between gap-3 rounded-xl border bg-white px-4 text-left text-sm font-medium text-[#1b1b1c] shadow-sm outline-none transition-all hover:bg-[#fcf9f8] focus:ring-4 focus:ring-[#005faa]/10 dark:bg-[#303030] dark:text-[#f3f0ef] dark:hover:bg-[#3a3b3c]",
-                    providerMenuOpen ? "border-[#005faa]/45 ring-4 ring-[#005faa]/10" : "border-white/80"
-                  )}
-                >
-                  <span className="truncate">{activeProviderName}</span>
-                  <ChevronDown className={cn("h-5 w-5 flex-shrink-0 text-[#404752] transition-transform", providerMenuOpen && "rotate-180 text-[#005faa]")} />
-                </button>
-                <AnimatePresence>
-                  {providerMenuOpen && (
-                    <motion.div
-                      initial={{ opacity: 0, y: 6, scale: 0.98 }}
-                      animate={{ opacity: 1, y: 0, scale: 1 }}
-                      exit={{ opacity: 0, y: 6, scale: 0.98 }}
-                      transition={{ duration: 0.14 }}
-                      role="listbox"
-                      style={{ scrollbarWidth: "none", msOverflowStyle: "none" }}
-                      className="provider-menu-scroll absolute left-0 top-[calc(100%+8px)] z-30 max-h-72 w-64 overflow-y-auto rounded-xl border border-[#c0c7d4]/45 bg-white p-1.5 shadow-[0_16px_40px_rgba(0,0,0,0.12)] dark:border-white/10 dark:bg-[#303030]"
-                    >
-                      {PROVIDER_OPTIONS.map((option) => {
-                        const selected = option.id === provider;
-                        return (
-                          <button
-                            key={option.id}
-                            type="button"
-                            role="option"
-                            aria-selected={selected}
-                            onClick={() => {
-                              setProvider(option.id);
-                              setProviderMenuOpen(false);
-                            }}
-                            className={cn(
-                              "flex h-9 w-full cursor-pointer items-center justify-between rounded-lg px-3 text-sm transition-colors",
-                              selected
-                                ? "bg-[#d3e3ff] font-semibold text-[#005faa]"
-                                : "text-[#1b1b1c] hover:bg-[#f0eded] dark:text-[#f3f0ef] dark:hover:bg-white/10"
-                            )}
-                          >
-                            <span>{option.name}</span>
-                            {selected && <Check className="h-4 w-4" />}
-                          </button>
-                        );
-                      })}
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-              </div>
+              <ChannelSelect value={provider} onChange={changeChannel} disabled={loading || loadingMore} />
               <div className="hidden h-8 w-px bg-[#c0c7d4]/40 sm:block" />
               <div className="relative flex min-w-0 flex-1 items-center">
                 <Search className="absolute left-3 h-5 w-5 text-[#404752] dark:text-[#c6c6c7]" />
@@ -856,6 +813,12 @@ export default function Home() {
               </div>
             </div>
           </form>
+          {activeChannel && (
+            <p className="mt-3 w-full max-w-2xl rounded-xl bg-[#d3e3ff]/35 px-4 py-3 text-xs leading-5 text-[#404752] dark:bg-[#003f6d]/25 dark:text-[#c6c6c7]">
+              <span className="mr-2 font-semibold">{activePlatform?.name} · {activeChannel.name}</span>
+              {activeChannel.description}
+            </p>
+          )}
           {showBrowserDownloadNotice && (
             <BrowserDownloadNotice className="mt-3 w-full max-w-2xl rounded-xl bg-[#d3e3ff]/35 px-4 py-3 dark:bg-[#003f6d]/25" />
           )}
@@ -907,7 +870,7 @@ export default function Home() {
                   <div>
                     <h2 className="text-[28px] font-bold leading-9 text-[#1b1b1c] md:text-[32px] md:leading-10 dark:text-[#f3f0ef]">搜索结果</h2>
                     <p className="mt-1 text-sm leading-5 text-[#404752] dark:text-[#c6c6c7]">
-                      找到 {results.length} 首相关歌曲
+                      找到 {results.length} 首相关歌曲 · {activePlatform?.name} / {activeChannel?.name}
                     </p>
                   </div>
                 </div>
@@ -1025,7 +988,8 @@ export default function Home() {
                           <button
                             onClick={(e) => { e.stopPropagation(); handlePlay(item); }}
                             className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-full text-[#404752] transition-colors hover:bg-[#005faa]/10 hover:text-[#005faa] dark:text-[#c6c6c7] dark:hover:text-[#a3c9ff]"
-                            title={isActive && playing ? "暂停" : "播放"}
+                            disabled={getMusicChannel(item.provider)?.preview === false}
+                            title={getMusicChannel(item.provider)?.preview === false ? "网盘下载渠道不支持试听" : isActive && playing ? "暂停" : "播放"}
                           >
                             {resolvingMusicId === item.id ? (
                               <Loader2 className="h-5 w-5 animate-spin" />
@@ -1039,7 +1003,7 @@ export default function Home() {
                           <button
                               onClick={(e) => { e.stopPropagation(); requestDownloadOne(item); }}
                               className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-full bg-[#005faa] text-white shadow-sm transition-all hover:bg-[#0078d4] hover:shadow-md active:scale-95"
-                              title="下载"
+                              title={getMusicChannel(item.provider)?.download === "source-page" ? "前往源站下载" : getMusicChannel(item.provider)?.download === "browser" ? "交给浏览器下载" : "下载"}
                             >
                               <Download className="w-5 h-5" />
                             </button>
@@ -1156,7 +1120,8 @@ export default function Home() {
 
               <button 
                 onClick={handleBatchDownload}
-                disabled={downloadingCount > 0}
+                disabled={downloadingCount > 0 || !batchSupported}
+                title={batchSupported ? "批量下载所选歌曲" : "当前渠道需逐首下载，可使用客户端进行批量下载"}
                 className="flex cursor-pointer items-center gap-2 rounded-full px-3 py-1.5 text-sm font-medium transition-colors hover:bg-white/10 disabled:cursor-wait disabled:opacity-50"
               >
                 {downloadingCount > 0 ? (
@@ -1167,7 +1132,7 @@ export default function Home() {
                 ) : (
                   <>
                     <Download className="w-4 h-4" />
-                    批量下载
+                    {batchSupported ? "批量下载" : "仅支持逐首下载"}
                   </>
                 )}
               </button>

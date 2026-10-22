@@ -1,18 +1,10 @@
 import axios from 'axios';
-import { Agent } from 'https';
 import { MusicItem, MusicProvider, PlayInfo } from '@/types/music';
 import { validateAudioLink } from '@/lib/providers/audio-link';
 
 const SEARCH_API_URL = 'https://songsearch.kugou.com/song_search_v2';
-const CGG_API_URL = 'https://music-api2.cenguigui.cn/';
-const BAKA_API_URL = 'https://api.baka.plus/meting/';
 const SVIP90_BASE_URL = 'https://music.90svip.cn/';
-const HAITANG_API_URLS = [
-  'https://musicapi.haitangw.net/kgqq/kg.php',
-  'https://music.haitangw.cc/kgqq/kg.php',
-];
 const REQUEST_TIMEOUT = 15000;
-const BAKA_HTTPS_AGENT = new Agent({ rejectUnauthorized: false });
 
 const SEARCH_HEADERS = {
   'User-Agent':
@@ -59,14 +51,7 @@ type KugouExtra = {
   cover?: string;
 };
 
-type KugouParser = '90svip' | 'baka' | 'cenguigui' | 'haitang';
-
-const KUGOU_DOWNLOAD_OPTIONS = [
-  { value: '90svip', label: '90svip 默认', quality: '320k/mp3', format: 'mp3' },
-  { value: 'baka', label: 'Baka 备用', quality: 'lossless', format: 'flac' },
-  { value: 'cenguigui', label: '尘归归备用', quality: 'mixed', format: 'mp3' },
-  { value: 'haitang', label: '海棠备用', quality: 'mixed', format: 'mp3' },
-];
+type KugouParser = '90svip';
 
 function extractExt(url: string, fallback = 'mp3') {
   const clean = url.split('?')[0];
@@ -159,33 +144,11 @@ export class KugouProvider implements MusicProvider {
   async getPlayInfo(id: string, extra?: unknown): Promise<PlayInfo> {
     const fallbackCover = getExtraValue(extra, 'cover') as string | undefined;
     const selectedParser = (extra as KugouExtra | undefined)?.selectedParser;
-    const resolvers = {
-      '90svip': () => this.getBy90svip(id),
-      baka: () => this.getByBaka(id),
-      cenguigui: () => this.getByCenguigui(id),
-      haitang: () => this.getByHaitang(id),
-    };
-    const order: KugouParser[] = ['90svip', 'baka', 'cenguigui', 'haitang'];
-    if (selectedParser && order.includes(selectedParser)) {
-      order.splice(order.indexOf(selectedParser), 1);
-      order.unshift(selectedParser);
+    if (selectedParser && selectedParser !== '90svip') {
+      throw new Error('该酷狗解析线路已下架，请重新搜索并选择可用渠道');
     }
-    let lastError: unknown;
-    for (const parser of order) {
-      try {
-        const info = await resolvers[parser]();
-        return {
-          url: info.url,
-          type: extractExt(info.url),
-          bitrate: info.bitrate,
-          cover: info.cover || fallbackCover,
-        };
-      } catch (error) {
-        lastError = error;
-        console.warn(`Kugou ${parser} fallback:`, error);
-      }
-    }
-    throw lastError || new Error('Failed to get Kugou play url');
+    const info = await this.getBy90svip(id);
+    return { url: info.url, type: extractExt(info.url), bitrate: info.bitrate, cover: fallbackCover };
   }
 
   async getLyric(id: string, extra?: unknown): Promise<KugouLyricData> {
@@ -240,7 +203,6 @@ export class KugouProvider implements MusicProvider {
         cover,
         selectedParser: '90svip',
         selectedFormat: 'mp3',
-        qualityOptions: KUGOU_DOWNLOAD_OPTIONS,
         filename: item.FileName || item.filename || `${title} - ${artist}`,
         duration: duration || -1,
       },
@@ -281,62 +243,4 @@ export class KugouProvider implements MusicProvider {
     return { url: verified.url, bitrate: '320k', cover: undefined };
   }
 
-  private async getByBaka(id: string) {
-    const url = `${BAKA_API_URL}?server=kugou&type=url&id=${encodeURIComponent(id)}&br=2000`;
-    const verified = await validateAudioLink(url, {
-      headers: SEARCH_HEADERS,
-      httpsAgent: BAKA_HTTPS_AGENT,
-      timeout: REQUEST_TIMEOUT,
-    });
-    return { url: verified.url, bitrate: 'lossless', cover: undefined };
-  }
-
-  private async getByCenguigui(id: string) {
-    for (const level of ['lossless', 'exhigh', 'standard']) {
-      const { data } = await axios.get(CGG_API_URL, {
-        params: { kg: '', id, type: 'song', format: 'json', level },
-        timeout: REQUEST_TIMEOUT,
-      });
-      const payload = data?.data || {};
-      const url = String(payload.url || '').trim();
-      if (url.startsWith('http')) {
-        try {
-          const verified = await validateAudioLink(url, { headers: SEARCH_HEADERS });
-          return {
-            url: verified.url,
-            bitrate: level,
-            cover: typeof payload.pic === 'string' ? payload.pic : undefined,
-          };
-        } catch {
-          continue;
-        }
-      }
-    }
-    throw new Error('Failed to get cenguigui url');
-  }
-
-  private async getByHaitang(id: string) {
-    for (const apiUrl of HAITANG_API_URLS) {
-      for (const level of ['hires', 'lossless', 'exhigh']) {
-        try {
-          const { data } = await axios.get(apiUrl, {
-            params: { type: 'json', id, level },
-            timeout: REQUEST_TIMEOUT,
-          });
-          const payload = data?.data || {};
-          const url = String(payload.url || '').trim();
-          if (url.startsWith('http')) {
-            try {
-              const verified = await validateAudioLink(url, { headers: SEARCH_HEADERS });
-              return { url: verified.url, bitrate: level, cover: undefined };
-            } catch {
-              continue;
-            }
-          }
-        } catch {
-        }
-      }
-    }
-    throw new Error('Failed to get haitang url');
-  }
 }

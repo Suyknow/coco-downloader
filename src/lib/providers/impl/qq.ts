@@ -48,7 +48,7 @@ type QQOfficialSearchResponse = {
 
 type QQExtra = {
   usage?: string;
-  selectedParser?: 'vkeys' | 'xcvts' | 'cyapi';
+  selectedParser?: string;
   selectedFormat?: string;
   cover?: string;
 };
@@ -61,21 +61,6 @@ export type QQLyricData = {
 };
 
 const QUALITY_PRIORITY = [10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0];
-const XCVTS_QUALITIES = ['臻品母带', '臻品全景声', '臻品2.0', 'SQ无损', 'HQ高品质', '中品质', '普通', '低品质', '试听'];
-const XCVTS_KEYS = [
-  'Nzg5OTMzNDRiOWJmMTEwNTY1NTU5OTAwOWNkYmEzZDI=',
-  'Y2U3NzhlYjBkMTg1OGVkZmI0YjIwNzFhMTE1ZjFlZGY=',
-];
-const CYAPI_KEYS = [
-  '1ffdf5733f5d538760e63d7e46ba17438d9f7b9dfc18c51be1109386fd74c3a1',
-  '2baf39266d8ef0580aba937245d5bb569fe376f230ff508f1faa0922dc320fe4',
-];
-const QQ_DOWNLOAD_OPTIONS = [
-  { value: 'vkeys', label: 'VKeys 默认', quality: 'lossless', format: 'flac' },
-  { value: 'xcvts', label: 'XCVTS 备用', quality: 'lossless', format: 'flac' },
-  { value: 'cyapi', label: 'CYAPI 备用', quality: 'mp3', format: 'mp3' },
-];
-
 function extractExt(url: string) {
   const clean = url.split('?')[0];
   const parts = clean.split('.');
@@ -97,10 +82,6 @@ function formatDuration(seconds?: number) {
 
 function decodeBase64(value: string) {
   return Buffer.from(value, 'base64').toString('utf8');
-}
-
-function pickRandom<T>(items: T[]) {
-  return items[Math.floor(Math.random() * items.length)];
 }
 
 function parseLyricLines(lyric: string) {
@@ -178,7 +159,6 @@ export class QQProvider implements MusicProvider {
               cover,
               selectedParser: 'vkeys',
               selectedFormat: 'flac',
-              qualityOptions: QQ_DOWNLOAD_OPTIONS,
             },
           };
         })
@@ -191,32 +171,10 @@ export class QQProvider implements MusicProvider {
 
   async getPlayInfo(id: string, extra?: unknown): Promise<PlayInfo> {
     const payload = extra as QQExtra | undefined;
-    const selectedParser = payload?.selectedParser;
-    try {
-      const resolvers = {
-        vkeys: () => this.getByVkeys(id, payload?.usage === 'playback' ? [8, 6] : QUALITY_PRIORITY),
-        cyapi: () => this.getByCyapi(id),
-        xcvts: () => this.getByXcvts(id),
-      };
-      const order: Array<keyof typeof resolvers> = ['vkeys', 'cyapi', 'xcvts'];
-      if (selectedParser && order.includes(selectedParser)) {
-        order.splice(order.indexOf(selectedParser), 1);
-        order.unshift(selectedParser);
-      }
-      let lastError: unknown;
-      for (const parser of order) {
-        try {
-          return await resolvers[parser]();
-        } catch (error) {
-          lastError = error;
-          console.warn(`QQ ${parser} fallback:`, error);
-        }
-      }
-      throw lastError || new Error('Failed to get QQ play url');
-    } catch (error) {
-      console.error('QQ getPlayInfo error:', error);
-      throw error;
+    if (payload?.selectedParser && payload.selectedParser !== 'vkeys') {
+      throw new Error('该 QQ 音乐解析线路已下架，请重新搜索并选择可用渠道');
     }
+    return this.getByVkeys(id, payload?.usage === 'playback' ? [8, 6] : QUALITY_PRIORITY);
   }
 
   async getLyric(id: string): Promise<QQLyricData> {
@@ -275,59 +233,4 @@ export class QQProvider implements MusicProvider {
     throw new Error('Failed to get play url');
   }
 
-  private async getByXcvts(id: string): Promise<PlayInfo> {
-    const apiKey = decodeBase64(pickRandom(XCVTS_KEYS));
-    for (const quality of XCVTS_QUALITIES) {
-      const { data } = await axios.get('https://api.xcvts.cn/api/music/qq', {
-        headers: { 'User-Agent': SEARCH_HEADERS['User-Agent'] },
-        params: { apiKey, mid: id, type: quality },
-        timeout: 15000,
-      });
-      if (data?.code !== 0) continue;
-      const payload = data?.data || {};
-      const url = String(payload.music || '').trim();
-      if (url.startsWith('http')) {
-        try {
-          const verified = await validateAudioLink(url, {
-            headers: { 'User-Agent': SEARCH_HEADERS['User-Agent'] },
-          });
-          return {
-            url: verified.url,
-            type: extractExt(verified.url),
-            bitrate: quality,
-            cover: typeof payload.cover === 'string' ? payload.cover : undefined,
-          };
-        } catch {
-          continue;
-        }
-      }
-    }
-    throw new Error('Failed to get xcvts url');
-  }
-
-  private async getByCyapi(id: string): Promise<PlayInfo> {
-    const { data } = await axios.get('https://cyapi.top/API/qq_music.php', {
-      headers: { 'User-Agent': SEARCH_HEADERS['User-Agent'] },
-      params: {
-        apikey: pickRandom(CYAPI_KEYS),
-        type: 'json',
-        mid: id,
-        quality: 'lossless',
-      },
-      timeout: 15000,
-    });
-    const url = String(data?.url || '').trim();
-    if (!url.startsWith('http')) {
-      throw new Error('Failed to get cyapi url');
-    }
-    const verified = await validateAudioLink(url, {
-      headers: { 'User-Agent': SEARCH_HEADERS['User-Agent'] },
-    });
-    return {
-      url: verified.url,
-      type: extractExt(verified.url),
-      bitrate: 'lossless',
-      cover: data?.cover?.large || data?.cover || undefined,
-    };
-  }
 }

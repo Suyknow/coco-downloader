@@ -29,8 +29,6 @@ class ChannelMenuButton(QToolButton):
                 action.setChecked(provider_id == self._provider_id)
                 if provider_id == "livepoo":
                     action.setToolTip("前往源站使用网盘保存，不支持试听或自动批量下载")
-                elif provider_id == "kugou":
-                    action.setToolTip("机房 IP 可能被拦截，建议使用本地网络客户端")
                 else:
                     action.setToolTip("客户端支持直接下载与批量下载")
                 action.triggered.connect(lambda checked=False, key=provider_id: self._select_channel(key))
@@ -155,7 +153,6 @@ class SearchCard(SimpleCardWidget):
         provider_id = self.platformComboBox.currentData()
         hints = {
             "livepoo": "力音当前提供网盘入口，需前往源站保存；不支持试听或批量下载。",
-            "kugou": "90svip 可能拦截机房 IP，建议在本地网络使用客户端。",
             "gequhai": "搜索歌曲海曲库，客户端支持直接下载和批量下载。",
         }
         label = next((name for name, key in PROVIDER_DISPLAY_NAMES.items() if key == provider_id), provider_id)

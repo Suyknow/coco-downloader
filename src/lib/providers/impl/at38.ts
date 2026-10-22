@@ -98,7 +98,10 @@ export class At38Provider implements MusicProvider {
     if (payload?.code !== 1 || typeof payload.url !== 'string' || !/^https?:\/\//i.test(payload.url)) {
       throw new Error(typeof payload?.msg === 'string' ? payload.msg : '51ape 暂未提供此歌曲的播放链接');
     }
-    const verified = await validateAudioLink(payload.url, { timeout: REQUEST_TIMEOUT });
+    const verified = await validateAudioLink(payload.url, {
+      timeout: REQUEST_TIMEOUT,
+      verifyMislabeledAudio: true,
+    });
     return { url: verified.url, type: audioExtension(verified.url) };
   }
 }

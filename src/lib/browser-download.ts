@@ -1,3 +1,5 @@
+import { audioMimeFromSignature } from '@/lib/audio-signature';
+
 export class BrowserDirectDownloadError extends Error {}
 
 type Progress = (percent: number, receivedBytes: number, totalBytes?: number) => void;
@@ -17,8 +19,9 @@ export async function fetchAudioBlob(url: string, progress: Progress, firstByteT
       const failure = await response.json().catch(() => null);
       throw new Error(failure?.error || `下载失败（${response.status}）`);
     }
-    const type = response.headers.get('content-type') || '';
-    if (!type.startsWith('audio/') && !type.includes('application/octet-stream')) {
+    let type = (response.headers.get('content-type') || '').toLowerCase();
+    const mislabeled = type.split(';', 1)[0].trim() === 'application/x-www-form-urlencoded';
+    if (!type.startsWith('audio/') && !type.includes('application/octet-stream') && !mislabeled) {
       await response.body.cancel();
       throw new Error('来源未返回音频文件');
     }
@@ -27,11 +30,29 @@ export async function fetchAudioBlob(url: string, progress: Progress, firstByteT
     const chunks: Uint8Array<ArrayBuffer>[] = [];
     let received = 0;
     const reader = response.body.getReader();
+    let signature = new Uint8Array(0);
+    let signatureChecked = !mislabeled;
     try {
       for (;;) {
         const { done, value } = await reader.read();
         if (done) break;
         refreshTimer();
+        if (!signatureChecked) {
+          const prefix = value.subarray(0, Math.max(0, 12 - signature.length));
+          const combined = new Uint8Array(signature.length + prefix.length);
+          combined.set(signature);
+          combined.set(prefix, signature.length);
+          signature = combined;
+          if (signature.length >= 12) {
+            const detectedType = audioMimeFromSignature(signature);
+            if (!detectedType) {
+              await reader.cancel();
+              throw new Error('来源未返回可识别的音频文件，请更换渠道');
+            }
+            type = detectedType;
+            signatureChecked = true;
+          }
+        }
         received += value.byteLength;
         chunks.push(new Uint8Array(value));
         progress(total > 0 ? Math.min(99, received / total * 100) : 0, received, total > 0 ? total : undefined);
@@ -39,6 +60,7 @@ export async function fetchAudioBlob(url: string, progress: Progress, firstByteT
     } finally {
       reader.releaseLock();
     }
+    if (!signatureChecked) throw new Error('来源未返回可识别的音频文件，请更换渠道');
     if (!received || (total > 0 && received !== total)) throw new Error('音频文件接收不完整，请重试');
     return new Blob(chunks, { type });
   } catch (error) {

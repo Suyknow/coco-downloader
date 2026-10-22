@@ -1,8 +1,15 @@
 "use client";
 
 import React, { useState, useRef, useEffect } from "react";
-import Image from "next/image";
-import { Search, Loader2, Play, Pause, Download, Check, Music, Trash2, ExternalLink, ArrowRight } from "lucide-react";
+import { SearchField } from "@/components/SearchField";
+import { SearchMorph } from "@/components/SearchMorph";
+import { useDiscoveryMode } from "@/components/DiscoveryMode";
+import { PlaylistDiscovery } from "@/components/PlaylistDiscovery";
+import { playlistApi } from "@/lib/playlists/client";
+import { playlistPlatform, withPlaylistChannels } from "@/lib/playlists/channel-resolver";
+import { SongList, SongRowActions, SongListToolbar, SongActionButton } from "@/components/music/SongList";
+import { SongBatchBar } from "@/components/music/SongBatchBar";
+import { Loader2, Play, Download, ListChecks, Music, ExternalLink } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
 import { MusicItem } from "@/types/music";
@@ -197,6 +204,10 @@ export default function Home() {
   const [query, setQuery] = useState("");
   const [provider, setProvider] = useState("netease");
   const [results, setResults] = useState<MusicItem[]>([]);
+  const [playlistQueue, setPlaylistQueue] = useState<MusicItem[] | null>(null);
+  const playbackItems = playlistQueue ?? results;
+  const [resultFilter, setResultFilter] = useState("");
+  const visibleResults = results.filter(item => `${item.title} ${item.artist} ${item.album || ""}`.toLowerCase().includes(resultFilter.trim().toLowerCase()));
   const [loading, setLoading] = useState(false);
   
   // Playback State
@@ -209,9 +220,34 @@ export default function Home() {
   const [playMode, setPlayMode] = useState<PlayMode>("order");
   const [shuffleOrder, setShuffleOrder] = useState<string[]>([]);
   const [shuffleIndex, setShuffleIndex] = useState(-1);
-  const handlePlayRef = useRef<(item: MusicItem) => void>(() => undefined);
+  const handlePlayRef = useRef<(item: MusicItem, queue?: MusicItem[], retry?: boolean) => void>(() => undefined);
   const getNextIndexRef = useRef<() => number>(() => -1);
 
+  const { discovery, searchSlot, setImportedPlaylist } = useDiscoveryMode();
+  const [playlistLink, setPlaylistLink] = useState("");
+  const [importingPlaylist, setImportingPlaylist] = useState(false);
+  const playlistImportRequest = useRef<AbortController | null>(null);
+  useEffect(() => {
+    if (!discovery) playlistImportRequest.current?.abort();
+    return () => playlistImportRequest.current?.abort();
+  }, [discovery]);
+  async function handlePlaylistImport(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!playlistLink.trim()) { void message.info("请先粘贴歌单链接"); return; }
+    if (importingPlaylist) return;
+    const controller = new AbortController();
+    playlistImportRequest.current = controller;
+    setImportingPlaylist(true);
+    try {
+      const detail = await playlistApi.import(playlistLink.trim(), controller.signal);
+      if (!controller.signal.aborted) { setImportedPlaylist(detail); window.scrollTo({ top: 0, behavior: "instant" }); }
+    } catch (error) {
+      if (!controller.signal.aborted) notifyError(error, "歌单导入失败，请确认链接公开可访问", "playlist-import");
+    } finally {
+      if (playlistImportRequest.current === controller) { setImportingPlaylist(false); playlistImportRequest.current = null; }
+    }
+  }
+  const homeSearchAnchor = useRef<HTMLDivElement>(null);
   const [searched, setSearched] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [downloadingCount, setDownloadingCount] = useState(0);
@@ -275,6 +311,7 @@ export default function Home() {
     if (!query.trim()) return;
 
     setLoading(true);
+    setResultFilter("");
     setSearched(true);
     setResults([]);
     setSelectedIds(new Set());
@@ -307,14 +344,14 @@ export default function Home() {
     }
   };
 
-  const syncShuffleIndex = (id: string) => {
+  const syncShuffleIndex = (id: string, queue = playbackItems) => {
     const index = shuffleOrder.indexOf(id);
     if (index >= 0) {
       setShuffleIndex(index);
       return;
     }
-    if (results.length > 0) {
-      const ids = results.map(r => r.id);
+    if (queue.length > 0) {
+      const ids = queue.map(r => r.id);
       const nextOrder = buildShuffleOrder(ids);
       setShuffleOrder(nextOrder);
       setShuffleIndex(nextOrder.indexOf(id));
@@ -324,51 +361,78 @@ export default function Home() {
   };
 
   const playRequestRef = useRef(0);
-  const handlePlay = async (item: MusicItem) => {
+  const playControllerRef = useRef<AbortController | null>(null);
+  const playbackResolvingRef = useRef(false);
+  const playbackSessionRef = useRef<{ item: MusicItem; queue?: MusicItem[]; attempted: Set<string> } | null>(null);
+  useEffect(() => () => { playControllerRef.current?.abort(); }, []);
+  const handlePlay = async (item: MusicItem, queue?: MusicItem[], retry = false) => {
+    if (!playlistPlatform(item) && (item.extra as { metadataOnly?: boolean } | undefined)?.metadataOnly) { void message.info("平台未提供该歌曲的解析标识，暂时无法播放"); return; }
+    if (queue) setPlaylistQueue(queue);
     if (getMusicChannel(item.provider)?.preview === false) {
       void message.info('此渠道仅提供网盘下载，请前往源站保存，暂不支持试听');
       return;
     }
-    if (resolvingMusicId === item.id) return;
+    if (!retry && resolvingMusicId === item.id) return;
+    playControllerRef.current?.abort();
+    const controller = new AbortController();
+    playControllerRef.current = controller;
     const requestId = ++playRequestRef.current;
     const audio = audioRef.current;
     if (!audio) return;
     try {
-      if (activeMusic?.id === item.id && activeMusic.provider === item.provider && audio.src) {
-        if (playing) { audio.pause(); setPlaying(false); }
-        else { await audio.play(); setPlaying(true); }
-        return;
+      if (!retry && activeMusic?.id === item.id && activeMusic.provider === item.provider && audio.src) {
+        if (playing) { audio.pause(); setPlaying(false); return; }
+        playbackResolvingRef.current = true;
+        try { await audio.play(); setPlaying(true); return; }
+        catch (error) {
+          if (!playlistPlatform(item)) throw error;
+          retry = true;
+        }
       }
       audio.pause();
+      playbackResolvingRef.current = true;
+      if (!retry) playbackSessionRef.current = { item, queue, attempted: new Set() };
       setActiveMusic(item);
-      syncShuffleIndex(item.id);
+      syncShuffleIndex(item.id, queue ?? playbackItems);
       setPlaying(false);
       setCurrentTime(0);
       setResolvingMusicId(item.id);
-      const preview = { ...item, extra: { ...(item.extra as Record<string, unknown> || {}), usage: 'playback' } };
-      const data = await fetchJson(buildUrlRequest(preview));
-      if (requestId !== playRequestRef.current) return;
-      if (data.delivery === 'source-page') throw new Error('此渠道仅提供源站下载，不支持试听');
-      if (!data.url) throw new Error(data.error || '渠道未返回播放链接');
-      if (data.cover) setActiveMusic({ ...item, cover: data.cover });
-      audio.src = data.url;
-      audio.load();
-      let timeout: ReturnType<typeof setTimeout> | undefined;
-      try {
-        await Promise.race([
-          audio.play(),
-          new Promise<never>((_, reject) => { timeout = setTimeout(() => reject(new Error('音频加载超时，请重试或切换渠道')), 35000); }),
-        ]);
-      } finally { clearTimeout(timeout); }
+      await withPlaylistChannels(item, 'playback', async candidate => {
+        const preview = { ...candidate, extra: { ...(candidate.extra as Record<string, unknown> || {}), usage: 'playback' } };
+        const response = await fetch(buildUrlRequest(preview), { signal: AbortSignal.any([controller.signal, AbortSignal.timeout(35000)]), cache: 'no-store' });
+        const data = await response.json();
+        controller.signal.throwIfAborted();
+        if (!response.ok || !data.url) throw new Error(data.error || '渠道未返回播放链接');
+        if (data.delivery === 'source-page') throw new Error('此渠道仅提供源站下载，不支持试听');
+        audio.src = data.url;
+        audio.load();
+        let timeout: ReturnType<typeof setTimeout> | undefined;
+        try {
+          await Promise.race([
+            audio.play(),
+            new Promise<never>((_, reject) => { timeout = setTimeout(() => reject(new Error('音频加载超时')), 35000); }),
+          ]);
+          controller.signal.throwIfAborted();
+          if (data.cover) setActiveMusic({ ...item, cover: data.cover });
+        } catch (error) {
+          if (requestId === playRequestRef.current) { audio.pause(); audio.removeAttribute('src'); audio.load(); }
+          throw error;
+        } finally { clearTimeout(timeout); }
+      }, { signal: controller.signal, attempted: playbackSessionRef.current?.attempted, onRetry: channel => {
+        void message.info({ key: 'playback-retry', content: `${channel.name} 暂不可用，正在尝试下一渠道` });
+      } });
       if (requestId === playRequestRef.current) setPlaying(true);
     } catch (error) {
       if (requestId !== playRequestRef.current) return;
+      playbackSessionRef.current = null;
       audio.pause();
+      audio.removeAttribute('src');
+      audio.load();
       setActiveMusic(null);
       setPlaying(false);
       notifyError(error, '播放失败，请重试或切换渠道', 'playback');
     } finally {
-      if (requestId === playRequestRef.current) setResolvingMusicId(null);
+      if (requestId === playRequestRef.current) { setResolvingMusicId(null); playbackResolvingRef.current = false; }
     }
   };
   handlePlayRef.current = handlePlay;
@@ -381,14 +445,14 @@ export default function Home() {
   };
 
   useEffect(() => {
-    const ids = results.map(r => r.id);
+    const ids = playbackItems.map(r => r.id);
     if (ids.length === 0) {
       setShuffleOrder([]);
       setShuffleIndex(-1);
       return;
     }
     setShuffleOrder(buildShuffleOrder(ids));
-  }, [results]);
+  }, [playbackItems]);
 
   useEffect(() => {
     if (!activeMusic) {
@@ -454,69 +518,73 @@ export default function Home() {
 
   const executeDownload = async (task: DownloadTask, browserWindow?: Window | null, handoffImmediately = false) => {
     try {
-      // Update status to downloading
-      setDownloadTasks(prev => prev.map(t => 
-        t.id === task.id ? { ...t, status: 'downloading' } : t
-      ));
+      await withPlaylistChannels(task.musicItem, 'download', async downloadItem => {
+        // Update status to downloading
+        setDownloadTasks(prev => prev.map(t => 
+          t.id === task.id ? { ...t, status: 'downloading', notice: playlistPlatform(task.musicItem) ? `正在使用 ${getMusicChannel(downloadItem.provider)?.name || downloadItem.provider} 获取音频` : undefined } : t
+        ));
 
-      const params = new URLSearchParams({
-        id: task.musicItem.id,
-        provider: task.musicItem.provider || 'netease',
-      });
-      if (task.musicItem.extra !== undefined) params.set('extra', JSON.stringify(task.musicItem.extra));
-      const response = await fetch(`/api/download?${params}`, { cache: 'no-store' });
-      const delivery = await response.json();
-      if (!response.ok || typeof delivery.url !== 'string') throw new Error(delivery.error || '下载链接获取失败');
-      const extension = String(delivery.type || '').toLowerCase();
-      const fileName = ['mp3', 'flac', 'm4a', 'aac', 'wav', 'ogg', 'opus'].includes(extension)
-        ? task.fileName.replace(/\.[^.]+$/, `.${extension}`)
-        : task.fileName;
-      const sourcePage = delivery.delivery === 'source-page';
-      if (sourcePage || getMusicChannel(task.musicItem.provider)?.download === 'browser') {
-        if (handoffImmediately) {
-          if (browserWindow && !browserWindow.closed) {
-            browserWindow.location.replace(delivery.url);
-          } else {
-            // If popups are blocked or the reserved tab was closed, hand off
-            // in this tab so downloading never requires another button click.
-            window.location.assign(delivery.url);
-          }
-        }
-        setDownloadTasks(prev => prev.map(t => t.id === task.id ? {
-          ...t, fileName, sourceUrl: delivery.url, delivery: sourcePage ? 'source-page' : 'audio',
-          status: handoffImmediately ? 'handed-off' : 'browser-ready',
-          notice: sourcePage ? '请在源站选择网盘入口保存，网页无法跟踪后续进度。' : '已交给浏览器处理，网页无法跟踪后续进度。',
-        } : t));
-        return;
-      }
-      setDownloadTasks(prev => prev.map(t => t.id === task.id ? { ...t, fileName, sourceUrl: delivery.url } : t));
-      let blob: Blob;
-      try {
-        blob = await fetchAudioBlob(delivery.url, (progress, receivedBytes, totalBytes) => {
-          setDownloadTasks(prev => prev.map(t => t.id === task.id ? { ...t, progress, receivedBytes, totalBytes } : t));
+        const params = new URLSearchParams({
+          id: downloadItem.id,
+          provider: downloadItem.provider || 'netease',
         });
-      } catch (error) {
-        if (!(error instanceof BrowserDirectDownloadError)) throw error;
-        setDownloadTasks(prev => prev.map(t => t.id === task.id ? {
-          ...t, status: 'browser-ready', progress: 0, receivedBytes: undefined, totalBytes: undefined, notice: error.message,
-        } : t));
-        return;
-      }
+        if (downloadItem.extra !== undefined) params.set('extra', JSON.stringify(downloadItem.extra));
+        const response = await fetch(`/api/download?${params}`, { cache: 'no-store', signal: AbortSignal.timeout(35000) });
+        const delivery = await response.json();
+        if (!response.ok || typeof delivery.url !== 'string') throw new Error(delivery.error || '下载链接获取失败');
+        const extension = String(delivery.type || '').toLowerCase();
+        const fileName = ['mp3', 'flac', 'm4a', 'aac', 'wav', 'ogg', 'opus'].includes(extension)
+          ? task.fileName.replace(/\.[^.]+$/, `.${extension}`)
+          : task.fileName;
+        const sourcePage = delivery.delivery === 'source-page';
+        if (sourcePage || getMusicChannel(downloadItem.provider)?.download === 'browser') {
+          if (handoffImmediately) {
+            if (browserWindow && !browserWindow.closed) {
+              browserWindow.location.replace(delivery.url);
+            } else {
+              // If popups are blocked or the reserved tab was closed, hand off
+              // in this tab so downloading never requires another button click.
+              window.location.assign(delivery.url);
+            }
+          }
+          setDownloadTasks(prev => prev.map(t => t.id === task.id ? {
+            ...t, fileName, sourceUrl: delivery.url, delivery: sourcePage ? 'source-page' : 'audio',
+            status: handoffImmediately ? 'handed-off' : 'browser-ready',
+            notice: sourcePage ? '请在源站选择网盘入口保存，网页无法跟踪后续进度。' : '已交给浏览器处理，网页无法跟踪后续进度。',
+          } : t));
+          return;
+        }
+        setDownloadTasks(prev => prev.map(t => t.id === task.id ? { ...t, fileName, sourceUrl: delivery.url } : t));
+        let blob: Blob;
+        try {
+          blob = await fetchAudioBlob(delivery.url, (progress, receivedBytes, totalBytes) => {
+            setDownloadTasks(prev => prev.map(t => t.id === task.id ? { ...t, progress, receivedBytes, totalBytes } : t));
+          });
+        } catch (error) {
+          if (playlistPlatform(task.musicItem)) throw error;
+          if (!(error instanceof BrowserDirectDownloadError)) throw error;
+          setDownloadTasks(prev => prev.map(t => t.id === task.id ? {
+            ...t, status: 'browser-ready', progress: 0, receivedBytes: undefined, totalBytes: undefined, notice: error.message,
+          } : t));
+          return;
+        }
 
-      // Handle completion
-      const url = window.URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = fileName;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      setTimeout(() => window.URL.revokeObjectURL(url), 60000);
+        // Handle completion
+        const url = window.URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = fileName;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        setTimeout(() => window.URL.revokeObjectURL(url), 60000);
 
-      setDownloadTasks(prev => prev.map(t => 
-        t.id === task.id ? { ...t, fileName, status: 'completed', progress: 100 } : t
-      ));
-
+        setDownloadTasks(prev => prev.map(t => 
+          t.id === task.id ? { ...t, fileName, status: 'completed', progress: 100, notice: undefined, error: undefined } : t
+        ));
+      }, { onRetry: channel => {
+        setDownloadTasks(prev => prev.map(t => t.id === task.id ? { ...t, progress: 0, receivedBytes: undefined, totalBytes: undefined, sourceUrl: undefined, notice: `${channel.name} 暂不可用，正在尝试下一渠道` } : t));
+      } });
     } catch (err: unknown) {
       if (browserWindow && !browserWindow.closed) browserWindow.close();
       console.error(err);
@@ -569,13 +637,11 @@ export default function Home() {
     setSelectedIds(next);
   };
 
-  const toggleAll = () => {
-    if (selectedIds.size === results.length) {
-      setSelectedIds(new Set());
-    } else {
-      setSelectedIds(new Set(results.map(r => r.id)));
-    }
-  };
+  const toggleAll = () => setSelectedIds(previous => {
+    const next = new Set(previous), all = visibleResults.every(item => next.has(item.id));
+    for (const item of visibleResults) { if (all) next.delete(item.id); else next.add(item.id); }
+    return next;
+  });
 
   const openQualityModal = (items: MusicItem[], mode: "single" | "batch") => {
     const qualityItems = getQualityItems(items);
@@ -594,7 +660,7 @@ export default function Home() {
   };
 
   const startBatchDownload = async (items: MusicItem[]) => {
-    if (items.some(item => !supportsBatchDownload(item.provider))) {
+    if (items.some(item => !playlistPlatform(item) && !supportsBatchDownload(item.provider))) {
       void message.info('所选渠道需逐首交给浏览器下载，不支持网页自动批量下载；可使用客户端');
       return;
     }
@@ -641,9 +707,21 @@ export default function Home() {
   };
 
   const requestDownloadOne = async (item: MusicItem) => {
+    if (!playlistPlatform(item) && (item.extra as { metadataOnly?: boolean } | undefined)?.metadataOnly) { void message.info("平台未提供该歌曲的解析标识，暂时无法下载"); return; }
     const downloadMode = getMusicChannel(item.provider)?.download;
     if (downloadMode !== 'browser' && downloadMode !== 'source-page' && openQualityModal([item], "single")) return;
     await startSingleDownload(item);
+  };
+
+  const requestPlaylistDownloads = async (items: MusicItem[], quality?: string) => {
+    if (!items.length || downloadingCount > 0) return;
+    if (quality !== undefined) {
+      // The command bar applies one default to the batch. Channels without a
+      // quality selector keep their own default rather than using invalid keys.
+      await startBatchDownload(quality === 'default' ? items : items.map(item => applyQualityChoice(item, quality)));
+    } else if (!openQualityModal(items, "batch")) {
+      await startBatchDownload(items);
+    }
   };
 
   const handleBatchDownload = async () => {
@@ -669,17 +747,17 @@ export default function Home() {
     await startBatchDownload(items);
   };
 
-  const currentIndex = activeMusic ? results.findIndex(r => r.id === activeMusic.id) : -1;
+  const currentIndex = activeMusic ? playbackItems.findIndex(r => r.id === activeMusic.id) : -1;
   const getNextIndex = () => {
     if (!activeMusic) return -1;
     if (playMode === "shuffle") {
       if (shuffleIndex >= 0 && shuffleIndex < shuffleOrder.length - 1) {
         const nextId = shuffleOrder[shuffleIndex + 1];
-        return results.findIndex(r => r.id === nextId);
+        return playbackItems.findIndex(r => r.id === nextId);
       }
       return -1;
     }
-    if (currentIndex >= 0 && currentIndex < results.length - 1) {
+    if (currentIndex >= 0 && currentIndex < playbackItems.length - 1) {
       return currentIndex + 1;
     }
     return -1;
@@ -691,7 +769,7 @@ export default function Home() {
     if (playMode === "shuffle") {
       if (shuffleIndex > 0) {
         const prevId = shuffleOrder[shuffleIndex - 1];
-        return results.findIndex(r => r.id === prevId);
+        return playbackItems.findIndex(r => r.id === prevId);
       }
       return -1;
     }
@@ -706,11 +784,11 @@ export default function Home() {
 
   const handleNext = () => {
     const nextIndex = getNextIndex();
-    if (nextIndex >= 0) handlePlay(results[nextIndex]);
+    if (nextIndex >= 0) handlePlay(playbackItems[nextIndex]);
   };
   const handlePrev = () => {
     const prevIndex = getPrevIndex();
-    if (prevIndex >= 0) handlePlay(results[prevIndex]);
+    if (prevIndex >= 0) handlePlay(playbackItems[prevIndex]);
   };
 
   const togglePlayMode = () => {
@@ -744,13 +822,20 @@ export default function Home() {
       }
       const nextIndex = getNextIndexRef.current();
       if (nextIndex >= 0) {
-        handlePlayRef.current(results[nextIndex]);
+        handlePlayRef.current(playbackItems[nextIndex]);
       } else {
         setPlaying(false);
       }
     };
 
     const handleError = () => {
+      if (playbackResolvingRef.current) return;
+      const session = playbackSessionRef.current;
+      if (session && playlistPlatform(session.item)) {
+        void message.info({ key: 'playback-retry', content: '当前音源无法继续播放，正在切换同平台其他渠道' });
+        handlePlayRef.current(session.item, session.queue, true);
+        return;
+      }
       setPlaying(false);
       setResolvingMusicId(null);
       setActiveMusic(null);
@@ -767,13 +852,16 @@ export default function Home() {
       audio.removeEventListener('loadedmetadata', handleLoadedMetadata);
       audio.removeEventListener('ended', handleEnded);
     };
-  }, [playing, playMode, results]);
+  }, [playing, playMode, playbackItems]);
 
   return (
     <main className="min-h-[calc(100vh-64px)] bg-[#fcf9f8] text-[#1b1b1c] selection:bg-[#d3e3ff] selection:text-[#001c39] pb-36 transition-colors duration-300 dark:bg-[#111315] dark:text-[#f3f0ef]">
-      <div className="mx-auto flex w-full max-w-[1440px] flex-col items-center px-4 py-10 md:px-12">
-        <motion.div 
-          layout
+      <div className={cn("mx-auto flex w-full flex-col items-center", discovery ? "max-w-[1360px] px-5 py-9 md:px-10 lg:px-12" : "max-w-[1440px] px-4 py-10 md:px-12")}>
+        <motion.div
+          initial={false}
+          animate={{ opacity: discovery ? 0 : 1 }}
+          transition={{ duration: .28, delay: discovery ? 0 : .2 }}
+          style={{ display: discovery ? "none" : undefined }}
           className={cn(
             "flex w-full flex-col items-center justify-center transition-all duration-500",
             searched ? "mt-0 mb-8" : "min-h-[calc(100vh-220px)]"
@@ -789,30 +877,7 @@ export default function Home() {
             搜索、播放与下载依赖第三方渠道的稳定性，不保证持续有效；失败时请重试或切换渠道。
           </p>
 
-          <form onSubmit={handleSearch} className="w-full max-w-2xl rounded-2xl border border-[#e5e2e1]/70 bg-[#f6f3f2] p-2 shadow-[0_8px_24px_rgba(0,0,0,0.04)] transition-all duration-300 focus-within:border-[#005faa]/30 focus-within:shadow-[0_12px_32px_rgba(0,0,0,0.08)] dark:border-white/10 dark:bg-[#242526]">
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-              <ChannelSelect value={provider} onChange={changeChannel} disabled={loading || loadingMore} />
-              <div className="hidden h-8 w-px bg-[#c0c7d4]/40 sm:block" />
-              <div className="relative flex min-w-0 flex-1 items-center">
-                <Search className="absolute left-3 h-5 w-5 text-[#404752] dark:text-[#c6c6c7]" />
-              <input
-                type="text"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                  placeholder="输入歌曲名、歌手或专辑..."
-                  className="h-12 w-full rounded-xl border-none bg-transparent py-3 pl-10 pr-28 text-base leading-6 text-[#1b1b1c] outline-none placeholder:text-[#404752]/60 focus:ring-0 dark:text-[#f3f0ef] dark:placeholder:text-[#c6c6c7]/60"
-              />
-              <button
-                type="submit"
-                disabled={loading}
-                  className="absolute bottom-1 right-1 top-1 flex cursor-pointer items-center gap-1 rounded-lg bg-[#005faa] px-4 text-sm font-medium text-white shadow-sm transition-all hover:bg-[#0078d4] active:scale-95 disabled:cursor-wait disabled:opacity-70"
-              >
-                  {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <span>搜索</span>}
-                  {!loading && <ArrowRight className="h-4 w-4" />}
-              </button>
-              </div>
-            </div>
-          </form>
+          <div ref={homeSearchAnchor} className="home-search-anchor" />
           {activeChannel && (
             <p className="mt-3 w-full max-w-2xl rounded-xl bg-[#d3e3ff]/35 px-4 py-3 text-xs leading-5 text-[#404752] dark:bg-[#003f6d]/25 dark:text-[#c6c6c7]">
               <span className="mr-2 font-semibold">{activePlatform?.name} · {activeChannel.name}</span>
@@ -845,7 +910,16 @@ export default function Home() {
             )}
           </AnimatePresence>
         </motion.div>
-        <div className="mx-auto w-full max-w-[1160px] flex-1">
+        <SearchMorph discovery={discovery} home={homeSearchAnchor} navigation={searchSlot}>
+          <div className={cn("search-morph-panel", discovery && "is-inactive")} inert={discovery} aria-hidden={discovery}>
+          <SearchField value={query} onChange={setQuery} onSubmit={handleSearch} placeholder="输入歌曲名、歌手或专辑..." label="搜索歌曲" busy={loading} prefix={<ChannelSelect value={provider} onChange={changeChannel} disabled={loading || loadingMore} />} />
+          </div>
+          <div className={cn("import-morph-panel", !discovery && "is-inactive")} inert={!discovery} aria-hidden={!discovery}>
+          <SearchField compact value={playlistLink} onChange={setPlaylistLink} onSubmit={handlePlaylistImport} placeholder="粘贴网易云、QQ音乐或酷狗歌单链接…" label="导入歌单链接" submitLabel="导入" busy={importingPlaylist} icon={<ExternalLink size={18} />} />
+          </div>
+        </SearchMorph>
+        <AnimatePresence>{discovery && <PlaylistDiscovery onPlay={(item, queue) => { void handlePlay(item, queue); }} onDownload={item => { void requestDownloadOne(item); }} onDownloadMany={(items, quality) => { void requestPlaylistDownloads(items, quality); }} downloadingCount={downloadingCount} activeMusic={activeMusic} playing={playing} resolvingId={resolvingMusicId} />}</AnimatePresence>
+        <div className={cn("mx-auto w-full max-w-[1160px] flex-1", discovery && "hidden")}>
           <AnimatePresence mode="wait">
             {loading ? (
               <motion.div 
@@ -875,143 +949,12 @@ export default function Home() {
                   </div>
                 </div>
 
-                <div
-                  className={cn(
-                    "mb-2 hidden gap-4 border-b border-[#c0c7d4]/30 px-4 py-2 text-xs font-medium text-[#404752] md:grid dark:text-[#c6c6c7]",
-                    "grid-cols-[40px_minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)_120px]"
-                  )}
-                >
-                  <div className="flex justify-center items-center">
-                      <button 
-                        onClick={toggleAll}
-                        className={cn(
-                          "w-5 h-5 rounded border flex items-center justify-center transition-colors cursor-pointer",
-                          selectedIds.size === results.length && results.length > 0
-                            ? "bg-[#005faa] border-[#005faa] text-white" 
-                            : "border-[#c0c7d4] bg-white hover:border-[#005faa] dark:bg-[#242526]"
-                        )}
-                      >
-                        {selectedIds.size === results.length && results.length > 0 && <Check className="w-3.5 h-3.5" />}
-                      </button>
-                    </div>
-                  <div>歌曲</div>
-                  <div className="hidden md:block">歌手</div>
-                  <div className="hidden md:block">专辑</div>
-                  <div className="text-right">操作</div>
-                </div>
-
-                <div className="flex flex-col gap-2">
-                  {results.map((item) => {
-                    const isActive = activeMusic?.id === item.id;
-                    const isSelected = selectedIds.has(item.id);
-                    
-                    return (
-                      <motion.div 
-                        key={item.id}
-                        initial={{ opacity: 0 }}
-                        animate={{ opacity: 1 }}
-                        onDoubleClick={() => handlePlay(item)}
-                        className={cn(
-                          "group flex cursor-pointer select-none items-center gap-3 overflow-hidden rounded-xl border border-[#c0c7d4]/20 bg-white p-3 shadow-[0_4px_12px_rgba(0,0,0,0.05)] transition-all duration-300 hover:bg-[#fcf9f8] hover:shadow-md active:scale-[0.99] md:grid md:gap-4 md:p-5 dark:border-white/10 dark:bg-[#242526] dark:hover:bg-[#303030]",
-                          "md:grid-cols-[40px_minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)_120px]",
-                          isActive && "border-[#005faa]/30 bg-[#d3e3ff]/35"
-                        )}
-                      >
-                        <div className="flex justify-center items-center">
-                            <button 
-                              onClick={(e) => { e.stopPropagation(); toggleSelection(item.id); }}
-                              className={cn(
-                                "w-5 h-5 rounded border flex items-center justify-center transition-colors cursor-pointer",
-                                isSelected 
-                                  ? "bg-[#005faa] border-[#005faa] text-white" 
-                                  : "border-[#c0c7d4] bg-white hover:border-[#005faa] dark:bg-[#242526]"
-                              )}
-                            >
-                              {isSelected && <Check className="w-3.5 h-3.5" />}
-                            </button>
-                          </div>
-
-                        <div className="flex min-w-0 flex-1 items-center gap-3 overflow-hidden md:flex-none">
-                          <div 
-                            onClick={(e) => { e.stopPropagation(); handlePlay(item); }}
-                            className="group/cover relative h-12 w-12 flex-shrink-0 cursor-pointer overflow-hidden rounded-lg bg-[#f0eded] transition-transform duration-300 group-hover:scale-105 group-hover:shadow-lg md:h-14 md:w-14 dark:bg-[#303030]"
-                          >
-                            {item.cover ? (
-                              <Image
-                                src={item.cover}
-                                alt={item.title}
-                                fill
-                                sizes="40px"
-                                className="object-cover"
-                                unoptimized
-                              />
-                            ) : (
-                              <div className="flex h-full w-full items-center justify-center text-[#404752]">
-                                <Music className="w-5 h-5" />
-                              </div>
-                            )}
-                            <div className={cn(
-                              "absolute inset-0 bg-black/20 flex items-center justify-center transition-opacity",
-                              isActive ? "opacity-100" : "opacity-0 group-hover/cover:opacity-100"
-                            )}>
-                              {resolvingMusicId === item.id ? (
-                                <Loader2 className="w-4 h-4 text-white animate-spin" />
-                              ) : isActive && playing ? (
-                                <Pause className="w-4 h-4 text-white fill-current" />
-                              ) : (
-                                <Play className="w-4 h-4 text-white fill-current" />
-                              )}
-                            </div>
-                          </div>
-                          <div className="flex flex-col min-w-0 overflow-hidden">
-                            <span className={cn(
-                              "truncate text-base font-bold leading-6",
-                              isActive ? "text-[#005faa] dark:text-[#a3c9ff]" : "text-[#1b1b1c] dark:text-[#f3f0ef]"
-                            )}>
-                              {item.title}
-                            </span>
-                            <span className="mt-0.5 block truncate text-sm text-[#404752] md:hidden dark:text-[#c6c6c7]">
-                              {item.artist}{item.album ? ` · ${item.album}` : ""}
-                            </span>
-                          </div>
-                        </div>
-
-                        <div className="hidden truncate text-sm text-[#404752] md:block dark:text-[#c6c6c7]">
-                          <div className="truncate">{item.artist}</div>
-                        </div>
-
-                        <div className="hidden truncate text-sm text-[#404752] md:block dark:text-[#c6c6c7]">
-                          {item.album || "-"}
-                        </div>
-
-                        <div className="ml-auto flex justify-end gap-1 pl-2 opacity-0 transition-opacity duration-200 group-hover:opacity-100 group-focus-within:opacity-100 md:ml-0 md:gap-2 md:pl-0">
-                          <button
-                            onClick={(e) => { e.stopPropagation(); handlePlay(item); }}
-                            className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-full text-[#404752] transition-colors hover:bg-[#005faa]/10 hover:text-[#005faa] dark:text-[#c6c6c7] dark:hover:text-[#a3c9ff]"
-                            disabled={getMusicChannel(item.provider)?.preview === false}
-                            title={getMusicChannel(item.provider)?.preview === false ? "网盘下载渠道不支持试听" : isActive && playing ? "暂停" : "播放"}
-                          >
-                            {resolvingMusicId === item.id ? (
-                              <Loader2 className="h-5 w-5 animate-spin" />
-                            ) : isActive && playing ? (
-                              <Pause className="h-5 w-5 fill-current" />
-                            ) : (
-                              <Play className="h-5 w-5 fill-current" />
-                            )}
-                          </button>
-                          <SourceLinkButton item={item} />
-                          <button
-                              onClick={(e) => { e.stopPropagation(); requestDownloadOne(item); }}
-                              className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-full bg-[#005faa] text-white shadow-sm transition-all hover:bg-[#0078d4] hover:shadow-md active:scale-95"
-                              title={getMusicChannel(item.provider)?.download === "source-page" ? "前往源站下载" : getMusicChannel(item.provider)?.download === "browser" ? "交给浏览器下载" : "下载"}
-                            >
-                              <Download className="w-5 h-5" />
-                            </button>
-                        </div>
-                      </motion.div>
-                    );
-                  })}
-                </div>
+                <SongListToolbar query={resultFilter} onQueryChange={setResultFilter}>
+                  <SongActionButton primary disabled={!visibleResults.length} onClick={() => { void handlePlay(visibleResults[0], visibleResults); }}><Play size={15} />播放列表</SongActionButton>
+                  <SongActionButton disabled={!selectedIds.size} onClick={() => { void handleBatchDownload(); }}><Download size={15} />下载所选{selectedIds.size ? ` ${selectedIds.size} 首` : ""}</SongActionButton>
+                  <SongActionButton onClick={toggleAll}><ListChecks size={15} />选择当前列表</SongActionButton>
+                </SongListToolbar>
+                <SongList items={visibleResults} selectedIds={selectedIds} onToggle={toggleSelection} onToggleAll={toggleAll} activeMusic={activeMusic} playing={playing} resolvingId={resolvingMusicId} onPlay={item => { void handlePlay(item, visibleResults); }} renderActions={item => <SongRowActions item={item} selected={selectedIds.has(item.id)} onToggleSelection={() => toggleSelection(item.id)} onPlay={() => { void handlePlay(item, visibleResults); }} onDownload={() => { void requestDownloadOne(item); }} playing={activeMusic?.id === item.id && activeMusic?.provider === item.provider && playing} resolving={resolvingMusicId === item.id} previewDisabled={getMusicChannel(item.provider)?.preview === false} downloadLabel={getMusicChannel(item.provider)?.download === "source-page" ? "前往源站下载" : getMusicChannel(item.provider)?.download === "browser" ? "交给浏览器下载" : "下载"}><SourceLinkButton item={item} /></SongRowActions>} emptyText="没有匹配的歌曲" />
                 {hasMoreResults ? (
                   <div className="mt-6 flex justify-center">
                     <button
@@ -1102,52 +1045,7 @@ export default function Home() {
         )}
       </AnimatePresence>
 
-      {/* Floating Batch Action Bar */}
-      <AnimatePresence>
-        {selectedIds.size > 0 && (
-          <motion.div
-            initial={{ y: 100, opacity: 0 }}
-            animate={{ y: 0, opacity: 1 }}
-            exit={{ y: 100, opacity: 0 }}
-            className="pointer-events-none fixed bottom-24 left-0 right-0 z-40 flex justify-center"
-          >
-            <div className="pointer-events-auto flex items-center gap-6 rounded-full bg-[#303030]/95 px-6 py-3 text-[#f3f0ef] shadow-[0_8px_24px_rgba(0,0,0,0.08)] backdrop-blur-xl">
-              <span className="text-sm font-medium">
-                已选择 <span className="font-bold text-[#a3c9ff]">{selectedIds.size}</span> 首歌曲
-              </span>
-              
-              <div className="h-5 w-px bg-[#c0c7d4]/30"></div>
-
-              <button 
-                onClick={handleBatchDownload}
-                disabled={downloadingCount > 0 || !batchSupported}
-                title={batchSupported ? "批量下载所选歌曲" : "当前渠道需逐首下载，可使用客户端进行批量下载"}
-                className="flex cursor-pointer items-center gap-2 rounded-full px-3 py-1.5 text-sm font-medium transition-colors hover:bg-white/10 disabled:cursor-wait disabled:opacity-50"
-              >
-                {downloadingCount > 0 ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    剩余 {downloadingCount} 首...
-                  </>
-                ) : (
-                  <>
-                    <Download className="w-4 h-4" />
-                    {batchSupported ? "批量下载" : "仅支持逐首下载"}
-                  </>
-                )}
-              </button>
-
-              <button 
-                onClick={() => setSelectedIds(new Set())}
-                className="cursor-pointer rounded-full p-1.5 text-[#f3f0ef]/75 transition-colors hover:bg-white/10 hover:text-[#ffdad6]"
-                title="取消选择"
-              >
-                <Trash2 className="w-4 h-4" />
-              </button>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      <SongBatchBar count={discovery ? 0 : selectedIds.size} busy={downloadingCount} supported={batchSupported} onDownload={() => { void handleBatchDownload(); }} onClear={() => setSelectedIds(new Set())} />
 
       {/* Player Bar */}
       <AnimatePresence>

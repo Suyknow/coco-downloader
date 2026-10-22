@@ -32,7 +32,7 @@ export const MUSIC_PLATFORMS: MusicPlatform[] = [
   {
     id: 'kugou', name: '酷狗音乐', channels: [
       { id: 'jianbin-kugou', name: '煎饼', description: '搜索酷狗曲库，支持在线播放与下载。', badges: ['可批量下载'], download: 'direct', preview: true },
-      { id: 'kugou', name: '90svip', description: '机房 IP 可能被拦截。建议在家庭网络自部署，或使用客户端；部署到云服务器仍可能不可用。', badges: ['建议本地部署 / 客户端'], download: 'direct', preview: true },
+      { id: 'kugou', name: '90svip', description: '搜索酷狗曲库，支持在线播放与下载。', badges: ['可批量下载'], download: 'direct', preview: true },
     ],
   },
   {

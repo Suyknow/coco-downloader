@@ -30,7 +30,7 @@ PROVIDERS: dict[str, MusicProvider] = {
 PROVIDER_GROUPS = {
     "网易云音乐": [("Meting", "netease"), ("51ape", "at38-netease"), ("煎饼", "jianbin-netease")],
     "QQ音乐": [("VKeys", "qq"), ("51ape", "at38-qq"), ("煎饼", "jianbin-qq")],
-    "酷狗音乐": [("煎饼", "jianbin-kugou"), ("90svip（本地网络）", "kugou")],
+    "酷狗音乐": [("煎饼", "jianbin-kugou"), ("90svip", "kugou")],
     "酷我音乐": [("波点 · 天宝", "bodian"), ("米兔（QQMP3）", "qqmp3"),
              ("煎饼", "jianbin-kuwo"), ("歌曲海", "gequhai"), ("力音 · 网盘下载", "livepoo")],
     "咪咕音乐": [],
@@ -41,6 +41,7 @@ PROVIDER_DISPLAY_NAMES = {
 }
 # Older labels are still accepted when loading saved settings.
 LEGACY_PROVIDER_NAMES = {
+    "酷狗音乐 / 90svip（本地网络）": "kugou",
     "云音乐": "netease", "QQ音乐（VKeys）": "qq", "酷狗音乐（90svip）": "kugou",
     "歌曲海": "gequhai", "波点": "bodian", "QQMP3": "qqmp3", "力音": "livepoo",
     "煎饼-1": "jianbin-netease", "煎饼-2": "jianbin-qq",

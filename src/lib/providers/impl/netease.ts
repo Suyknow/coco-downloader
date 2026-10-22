@@ -1,6 +1,7 @@
 import axios from 'axios';
 import crypto from 'crypto';
 import { MusicItem, MusicProvider, PlayInfo } from '@/types/music';
+import { NETEASE_QUALITY_OPTIONS } from '@/lib/music-quality';
 
 const API_DOMAIN = 'https://interface.music.163.com';
 const LYRIC_API_URL = 'https://interface3.music.163.com/eapi/song/lyric/v1';
@@ -18,11 +19,7 @@ const METING_BR_BY_LEVEL: Record<string, string> = {
   exhigh: '320',
   lossless: '2000',
 };
-const QUALITY_OPTIONS = [
-  { value: 'standard', label: '标准音质', quality: '128', format: 'mp3' },
-  { value: 'exhigh', label: '极高音质', quality: '320', format: 'mp3' },
-  { value: 'lossless', label: '无损音质', quality: 'lossless', format: 'flac/mp3' },
-];
+const QUALITY_OPTIONS = NETEASE_QUALITY_OPTIONS;
 const DEFAULT_UA =
   'Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 ' +
   '(KHTML, like Gecko) Safari/537.36 Chrome/91.0.4472.164 ' +

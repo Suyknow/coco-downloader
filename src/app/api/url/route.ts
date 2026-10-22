@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getProvider } from '@/lib/providers';
+import { resolveChannelPlayInfo } from '@/lib/providers/official-source';
 import { providerErrorMessage } from '@/lib/api-error';
 
 function parseExtra(value: string | null) {
@@ -22,8 +22,7 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const provider = getProvider(providerName);
-    const info = await provider.getPlayInfo(id, extra);
+    const info = await resolveChannelPlayInfo(providerName, id, extra);
     return NextResponse.json(info);
   } catch (error) {
     return NextResponse.json({ error: providerErrorMessage(error) }, { status: 502 });

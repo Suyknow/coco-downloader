@@ -24,7 +24,7 @@ from ..services.thread_lifecycle import retain_thread
 from ..services.providers import PROVIDER_DISPLAY_NAMES, get_provider
 
 PAGE_SIZE = 20
-PAGED_PLATFORMS = {"netease", "qq", "kugou"}
+PAGED_PLATFORMS = {"netease", "qq", "kugou", "gdstudio-netease", "gequke"}
 DOWNLOAD_ONLY_PLATFORMS = {"力音", "livepoo"}
 NETEASE_OFFICIAL_PLATFORMS = {"netease"}
 
@@ -409,11 +409,20 @@ class HomeInterface(ScrollArea):
                 return
             netease_level = dialog.selected_level
 
+        gd_overrides = {}
+        gd_item = next((self.currentItems[index] for index in indexes if self.currentItems[index].provider == "gdstudio-netease"), None)
+        if gd_item:
+            gd_overrides = self._select_download_option(gd_item)
+            if gd_overrides is None:
+                return
+
         for index in indexes:
             item = self.currentItems[index]
             overrides = {"_batch": True}
             if netease_level and self._is_netease_official(item.provider):
                 overrides["level"] = netease_level
+            if item.provider == "gdstudio-netease":
+                overrides.update(gd_overrides)
             signalBus.downloadRequested.emit(item, overrides)
         self.songListWidget.clear_selection()
 
@@ -461,9 +470,10 @@ class HomeInterface(ScrollArea):
         if not valid_options:
             return {}
 
+        is_gd = item.provider == "gdstudio-netease"
         dialog = DownloadOptionDialog(
-            self.tr("选择下载线路"),
-            self.tr("{provider} 支持多个解析线路，请选择本次下载使用的线路。").format(provider=item.provider),
+            self.tr("选择下载音质") if is_gd else self.tr("选择下载线路"),
+            self.tr("GD音乐台支持多种音质，实际音质以返回文件为准。") if is_gd else self.tr("{provider} 支持多个解析线路，请选择本次下载使用的线路。").format(provider=item.provider),
             valid_options,
             self._default_download_option_value(item),
             self.window(),
@@ -475,6 +485,8 @@ class HomeInterface(ScrollArea):
         value = selected.get("value")
         if not isinstance(value, str) or not value:
             return {}
+        if is_gd:
+            return {"level": value, "selectedLevel": value}
         return {
             "selectedParser": selected.get("parser") or value,
             "selectedLevel": selected.get("level"),

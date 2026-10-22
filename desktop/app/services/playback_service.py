@@ -80,7 +80,7 @@ class MediaPrepareThread(QThread):
             provider = get_provider(self.item.provider)
             extra = dict(self.item.extra)
             extra.update(self.extra_overrides)
-            if self.item.provider == "netease" and not extra.get("level"):
+            if self.item.provider in {"netease", "gdstudio-netease"} and not extra.get("level"):
                 extra["level"] = "exhigh"
             if self.item.provider in {"qq", "qq-official", "kugou"}:
                 extra["usage"] = "playback"

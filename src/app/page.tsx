@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useRef, useEffect } from "react";
+import { SearchSourceChoice } from "@/components/SearchSourceChoice";
 import { SearchField } from "@/components/SearchField";
 import { SearchMorph } from "@/components/SearchMorph";
 import { useDiscoveryMode } from "@/components/DiscoveryMode";
@@ -112,7 +113,7 @@ function applyQualityChoice(item: MusicItem, value: string) {
     extra.qualityOptions?.find((option) => option.value === value) ||
     extra.qualityOptions?.[0];
   if (!match) return item;
-  if (item.provider === "netease") {
+  if (item.provider === "netease" || item.provider === "gdstudio-netease") {
     return {
       ...item,
       extra: {
@@ -203,6 +204,7 @@ const SEARCH_PAGE_SIZE = 20;
 export default function Home() {
   const [query, setQuery] = useState("");
   const [provider, setProvider] = useState("netease");
+  const [searchSource, setSearchSource] = useState<"channel" | "official">("channel");
   const [results, setResults] = useState<MusicItem[]>([]);
   const [playlistQueue, setPlaylistQueue] = useState<MusicItem[] | null>(null);
   const playbackItems = playlistQueue ?? results;
@@ -279,6 +281,16 @@ export default function Home() {
     setSearched(false);
   };
 
+  const changeSearchSource = (source: "channel" | "official") => {
+    if (source === searchSource) return;
+    setSearchSource(source);
+    setResults([]);
+    setResultFilter("");
+    setSelectedIds(new Set());
+    setHasMoreResults(false);
+    setSearched(false);
+  };
+
   const openPlayerDrawer = () => {
     setPlayerDrawerSession((session) => session + 1);
     setPlayerDrawerOpen(true);
@@ -297,6 +309,7 @@ export default function Home() {
     const params = new URLSearchParams({
       q: query.trim(),
       provider,
+      source: searchSource,
       limit: String(SEARCH_PAGE_SIZE),
       offset: String(offset),
     });
@@ -484,9 +497,11 @@ export default function Home() {
       id: activeMusic.id,
       provider: activeMusic.provider || "netease",
     });
-    if (activeMusic.extra !== undefined) {
-      params.set("extra", JSON.stringify(activeMusic.extra));
-    }
+    params.set("extra", JSON.stringify({
+      ...(activeMusic.extra as Record<string, unknown> || {}),
+      title: activeMusic.title,
+      artist: activeMusic.artist,
+    }));
 
     fetch(`/api/lyric?${params.toString()}`)
       .then(async (res) => { if (!res.ok) throw new Error("歌词加载失败"); return res.json(); })
@@ -878,6 +893,7 @@ export default function Home() {
           </p>
 
           <div ref={homeSearchAnchor} className="home-search-anchor" />
+          <SearchSourceChoice value={searchSource} onChange={changeSearchSource} disabled={loading || loadingMore} />
           {activeChannel && (
             <p className="mt-3 w-full max-w-2xl rounded-xl bg-[#d3e3ff]/35 px-4 py-3 text-xs leading-5 text-[#404752] dark:bg-[#003f6d]/25 dark:text-[#c6c6c7]">
               <span className="mr-2 font-semibold">{activePlatform?.name} · {activeChannel.name}</span>
@@ -944,7 +960,7 @@ export default function Home() {
                   <div>
                     <h2 className="text-[28px] font-bold leading-9 text-[#1b1b1c] md:text-[32px] md:leading-10 dark:text-[#f3f0ef]">搜索结果</h2>
                     <p className="mt-1 text-sm leading-5 text-[#404752] dark:text-[#c6c6c7]">
-                      找到 {results.length} 首相关歌曲 · {activePlatform?.name} / {activeChannel?.name}
+                      找到 {results.length} 首相关歌曲 · {activePlatform?.name} / {activeChannel?.name} · {searchSource === "official" ? "官方曲库" : "渠道搜索"}
                     </p>
                   </div>
                 </div>

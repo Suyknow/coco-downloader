@@ -2,6 +2,8 @@
 from .base import MusicProvider
 from .at38 import At38Provider
 from .gequhai import GequhaiProvider
+from .gequke import GequkeProvider
+from .gdstudio import GDStudioProvider
 from .bodian import BodianProvider
 from .jianbin import JianbinProvider
 from .kugou import KugouProvider
@@ -12,11 +14,13 @@ from .qqmp3 import QQMp3Provider
 
 PROVIDERS: dict[str, MusicProvider] = {
     "netease": NeteaseOfficialProvider(),
+    "gdstudio-netease": GDStudioProvider(),
     "at38-netease": At38Provider("at38-netease", "wy"),
     "at38-qq": At38Provider("at38-qq", "qq"),
     "kugou": KugouProvider(),
     "bodian": BodianProvider(),
     "gequhai": GequhaiProvider(),
+    "gequke": GequkeProvider(),
     "qq": QQProvider(),
     "qqmp3": QQMp3Provider(),
     "livepoo": LivepooProvider(),
@@ -28,11 +32,11 @@ PROVIDERS: dict[str, MusicProvider] = {
 
 # Keep provider IDs stable for saved playlists; group their labels by music service.
 PROVIDER_GROUPS = {
-    "网易云音乐": [("Meting", "netease"), ("51ape", "at38-netease"), ("煎饼", "jianbin-netease")],
+    "网易云音乐": [("Meting", "netease"), ("GD音乐台", "gdstudio-netease"), ("51ape", "at38-netease"), ("煎饼", "jianbin-netease")],
     "QQ音乐": [("VKeys", "qq"), ("51ape", "at38-qq"), ("煎饼", "jianbin-qq")],
     "酷狗音乐": [("煎饼", "jianbin-kugou"), ("90svip", "kugou")],
     "酷我音乐": [("波点 · 天宝", "bodian"), ("米兔（QQMP3）", "qqmp3"),
-             ("煎饼", "jianbin-kuwo"), ("歌曲海", "gequhai"), ("力音 · 网盘下载", "livepoo")],
+             ("煎饼", "jianbin-kuwo"), ("歌曲海", "gequhai"), ("歌曲客", "gequke"), ("力音 · 网盘下载", "livepoo")],
     "咪咕音乐": [],
 }
 PROVIDER_DISPLAY_NAMES = {

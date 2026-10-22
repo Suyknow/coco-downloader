@@ -8,15 +8,19 @@ import { QQMp3Provider } from './impl/qqmp3';
 import { LivepooProvider } from './impl/livepoo';
 import { JianbinProvider } from './impl/jianbin';
 import { NeteaseOfficialProvider } from './impl/netease';
+import { GDStudioProvider } from './impl/gdstudio';
+import { GequkeProvider } from './impl/gequke';
 
 const providers: Record<string, MusicProvider> = {
   'netease': new NeteaseOfficialProvider(),
+  'gdstudio-netease': new GDStudioProvider(),
   'at38-netease': new At38Provider('at38-netease', 'wy'),
   'at38-qq': new At38Provider('at38-qq', 'qq'),
   qq: new QQProvider(),
   kugou: new KugouProvider(),
   bodian: new BodianProvider(),
   gequhai: new GequhaiProvider(),
+  gequke: new GequkeProvider(),
   qqmp3: new QQMp3Provider(),
   livepoo: new LivepooProvider(),
   'jianbin-netease': new JianbinProvider('jianbin-netease', 'netease'),

@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "node --test tests/*.test.cjs"
+    "test": "node --test tests/*.test.cjs",
+    "setup:gdstudio": "node scripts/setup-gdstudio.mjs"
   },
   "dependencies": {
     "antd": "^6.2.0",
@@ -16,6 +17,7 @@
     "cheerio": "^1.1.2",
     "clsx": "^2.1.1",
     "framer-motion": "^12.26.2",
+    "impers": "0.1.2",
     "lucide-react": "^0.562.0",
     "next": "16.1.2",
     "next-themes": "^0.4.6",

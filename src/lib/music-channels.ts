@@ -18,6 +18,7 @@ export const MUSIC_PLATFORMS: MusicPlatform[] = [
   {
     id: 'netease', name: '网易云音乐', channels: [
       { id: 'netease', name: 'Meting', description: '搜索网易云曲库，支持标准、极高和无损音质。', badges: ['可批量下载'], download: 'direct', preview: true },
+      { id: 'gdstudio-netease', name: 'GD音乐台', description: '搜索网易云曲库，支持在线播放和多音质下载。可用音质以歌曲实际返回为准。', badges: ['可批量下载'], download: 'direct', preview: true },
       { id: 'at38-netease', name: '51ape', description: '搜索网易云曲库，支持在线播放与下载。', badges: ['可批量下载'], download: 'direct', preview: true },
       { id: 'jianbin-netease', name: '煎饼', description: '搜索网易云曲库，支持在线播放与下载。', badges: ['可批量下载'], download: 'direct', preview: true },
     ],
@@ -41,6 +42,7 @@ export const MUSIC_PLATFORMS: MusicPlatform[] = [
       { id: 'qqmp3', name: '米兔（QQMP3）', description: '搜索酷我曲库，支持在线播放。下载需逐首交给浏览器处理。', badges: ['浏览器下载', '网页不支持批量'], download: 'browser', preview: true },
       { id: 'jianbin-kuwo', name: '煎饼', description: '搜索酷我曲库，支持在线播放。下载需逐首交给浏览器处理。', badges: ['浏览器下载', '网页不支持批量'], download: 'browser', preview: true },
       { id: 'gequhai', name: '歌曲海', description: '搜索歌曲海曲库，支持在线播放。下载需逐首交给浏览器处理。', badges: ['浏览器下载', '网页不支持批量'], download: 'browser', preview: true },
+      { id: 'gequke', name: '歌曲客', description: '搜索歌曲客曲库，使用酷我 MP3 直链播放。下载需逐首交给浏览器处理。', badges: ['MP3直链', '浏览器下载', '网页不支持批量'], download: 'browser', preview: true },
       { id: 'livepoo', name: '力音 · 网盘下载', description: '通过源站提供的网盘入口保存歌曲，不支持试听或自动批量下载。', badges: ['前往源站', '不支持试听 / 批量'], download: 'source-page', preview: false },
     ],
   },

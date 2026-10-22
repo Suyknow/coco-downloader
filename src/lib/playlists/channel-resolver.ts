@@ -2,7 +2,7 @@ import type { MusicItem } from '@/types/music';
 import { MUSIC_PLATFORMS, type MusicChannel } from '@/lib/music-channels';
 
 type Usage = 'playback' | 'download';
-export const PLATFORM_ID_CHANNELS = new Set(['netease', 'qq', 'kugou', 'at38-netease', 'at38-qq']);
+export const PLATFORM_ID_CHANNELS = new Set(['netease', 'qq', 'kugou', 'at38-netease', 'at38-qq', 'gdstudio-netease']);
 type Options = {
   signal?: AbortSignal;
   attempted?: Set<string>;

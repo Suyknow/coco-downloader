@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getProvider } from '@/lib/providers';
+import { searchBySource } from '@/lib/providers/official-source';
 import { providerErrorMessage } from '@/lib/api-error';
 
 export async function GET(request: NextRequest) {
@@ -16,8 +16,8 @@ export async function GET(request: NextRequest) {
   const resolvedProviderName =
     providerName && providerName !== 'all' ? providerName : 'netease';
   try {
-    const provider = getProvider(resolvedProviderName);
-    const items = await provider.search(q, limit, offset);
+    const source = searchParams.get('source') === 'official' ? 'official' : 'channel';
+    const items = await searchBySource(resolvedProviderName, q, limit, offset, source);
     return NextResponse.json({ items });
   } catch (error) {
     return NextResponse.json({ error: providerErrorMessage(error) }, { status: 502 });

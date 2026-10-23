@@ -19,8 +19,6 @@ from app.components.download_task_card import DownloadTaskCard
 from app.components.search_card import SearchCard
 from app.models.music import MusicItem, PlayInfo
 from app.services.providers import PROVIDERS, get_provider
-from app.services.providers.netease_official import NeteaseOfficialProvider
-from app.services.errors import ProviderNetworkError
 from app.services.thread_lifecycle import shutdown_threads
 from app.view.download_interface import DownloadInterface
 
@@ -41,18 +39,17 @@ class DesktopTests(unittest.TestCase):
         QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
 
     def test_provider_menu_matches_web(self):
-        web = (Path(__file__).resolve().parents[2] / "src/app/page.tsx").read_text(encoding="utf-8")
-        options = web.split("const PROVIDER_OPTIONS = [", 1)[1].split("];", 1)[0]
-        expected = re.findall(r'id: "([^"]+)", name: "([^"]+)"', options)
+        web = (Path(__file__).resolve().parents[2] / "src/lib/music-channels.ts").read_text(encoding="utf-8")
+        expected = [(key, name) for key, name in re.findall(r"\{ id: '([^']+)', name: '([^']+)'", web) if key in PROVIDERS]
         card = SearchCard()
         combo = card.platformComboBox
-        actual = [(combo.itemData(i), combo.itemText(i)) for i in range(combo.count())]
+        actual = [(key, action.text()) for key, action in combo._actions.items()]
         self.assertEqual(actual, expected)
         self.assertEqual(set(PROVIDERS), {key for key, _ in expected})
         emitted = []
         card.searchRequested.connect(lambda query, provider: emitted.append(provider))
-        for index, (key, _) in enumerate(expected):
-            combo.setCurrentIndex(index)
+        for key, _ in expected:
+            combo.setCurrentData(key)
             card._on_search("test")
             self.assertEqual(emitted[-1], key)
             self.assertEqual(get_provider(key).name, key)
@@ -60,25 +57,10 @@ class DesktopTests(unittest.TestCase):
             get_provider("音源2")
         card.deleteLater()
 
-    def test_netease_redirect_and_network_fallback(self):
-        provider = NeteaseOfficialProvider()
-        response = Mock(status_code=302, headers={"Location": "https://example.com/audio.flac"})
-        provider._http = Mock()
-        provider._http.get_response.return_value = response
-        with patch.object(provider, "_get_by_cenguigui") as fallback:
-            result = provider.get_play_info("1", {"selectedLevel": "exhigh"})
-            self.assertEqual(result.url, "https://example.com/audio.flac")
-            fallback.assert_not_called()
-        self.assertFalse(provider._http.get_response.call_args.kwargs["allow_redirects"])
-        self.assertEqual(provider._http.get_response.call_args.kwargs["params"]["br"], "320")
-        response.close.assert_called_once()
-        provider._http.get_response.side_effect = ProviderNetworkError("timeout", "timeout")
-        with self.assertLogs("app.services.providers.netease_official", level="WARNING"), patch.object(provider, "_get_by_cenguigui", return_value={"url": "https://example.com/fallback.mp3"}):
-            self.assertIn("fallback", provider.get_play_info("1").url)
 
     def test_card_deleted_while_cover_is_loading(self):
         service = DownloadService()
-        task = service._create_task_info(MusicItem("1", "test", "artist", "qq", cover="https://example.com/cover"), {}, False)
+        task = service._create_task_info(MusicItem("1", "test", "artist", "gdstudio-netease", cover="https://example.com/cover"), {}, False)
         def slow_cover(*args, **kwargs):
             time.sleep(0.15)
             return Mock(content=b"")
@@ -95,7 +77,7 @@ class DesktopTests(unittest.TestCase):
         service = DownloadService()
         view = DownloadInterface()
         view.show()
-        item = MusicItem("1", "test", "artist", "qq", cover="https://example.com/cover")
+        item = MusicItem("1", "test", "artist", "gdstudio-netease", cover="https://example.com/cover")
         def slow_cover(*args, **kwargs):
             time.sleep(0.15)
             return Mock(content=b"")
@@ -108,7 +90,7 @@ class DesktopTests(unittest.TestCase):
         old_folder = cfg.downloadFolder.value
         cfg.downloadFolder.value = TEST_DIR.name
         try:
-            with patch("app.services.download_service.get_provider", return_value=provider), patch("app.services.download_service.requests.get", return_value=response), patch("app.components.download_task_card.get_remote_asset", side_effect=slow_cover):
+            with patch("app.services.music_service.get_provider", return_value=provider), patch("app.services.download_service.requests.get", return_value=response), patch("app.components.download_task_card.get_remote_asset", side_effect=slow_cover):
                 service.start_download(item)
                 pump_until(lambda: not service.threads)
                 self.assertEqual(view.finishedTaskView.count(), 1)
@@ -131,7 +113,7 @@ class DesktopTests(unittest.TestCase):
             time.sleep(0.15)
         with patch.object(DownloadThread, "run", slow_run):
             for index in range(4):
-                service.start_download(MusicItem(str(index), "test", "artist", "qq"))
+                service.start_download(MusicItem(str(index), "test", "artist", "gdstudio-netease"))
             task = next(iter(service.threads.values()))
             service.cancel_download(task)
             self.assertEqual(len(service.threads), 3)

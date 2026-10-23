@@ -13,44 +13,7 @@ import requests
 from app.services.providers import PROVIDERS, get_provider
 
 
-def verify_playback(item):
-    import tempfile
-    from unittest.mock import Mock, patch
-    import os
-    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-    from PyQt5.QtWidgets import QApplication
-    from PyQt5.QtCore import QTimer, QCoreApplication, QEvent
-    app = QApplication.instance() or QApplication([])
-    with tempfile.TemporaryDirectory() as folder:
-        with patch("PyQt5.QtCore.QStandardPaths.writableLocation", return_value=folder):
-            from app.services.playback_service import PlaybackService
-            from app.common.signal_bus import signalBus
-        service = PlaybackService(Mock())
-        service.player.setVolume(0)
-        result = {"started": False}
-        def error(message):
-            result["error"] = message
-            app.quit()
-        def progress(position):
-            if position > 0:
-                result.update(started=True, position_ms=position, duration_ms=service.player.duration())
-                service.player.stop()
-                app.quit()
-        signalBus.playbackError.connect(error)
-        service.player.positionChanged.connect(progress)
-        service.set_playlist([item], 0)
-        timer = QTimer()
-        timer.setSingleShot(True)
-        timer.timeout.connect(app.quit)
-        timer.start(40000)
-        app.exec()
-        signalBus.playbackError.disconnect(error)
-        service.deleteLater()
-        QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
-        return result
-
-
-def probe(name, query, playback=False):
+def probe(name, query):
     provider = get_provider(name)
     result = {"provider": name, "query": query, "search_count": 0, "samples": []}
     try:
@@ -73,9 +36,6 @@ def probe(name, query, playback=False):
                                  or (len(data) > 1 and data[0] == 255 and data[1] & 0xE0 == 0xE0))
                         sample["audio_verified"] = bool(audio)
                         sample["prefix_hex"] = data[:16].hex()
-                if playback and sample.get("audio_verified"):
-                    sample["qt_playback"] = verify_playback(item)
-                    playback = False
             except Exception as error:
                 sample["error"] = f"{type(error).__name__}: {error}"
     except Exception as error:
@@ -90,16 +50,13 @@ def main():
     parser.add_argument("--query", default="晴天")
     parser.add_argument("--output", default="build/provider-probe.json")
     parser.add_argument("--only", nargs="*")
-    parser.add_argument("--playback", action="store_true")
     args = parser.parse_args()
     if args.provider:
-        print(json.dumps(probe(args.provider, args.query, args.playback), ensure_ascii=False))
+        print(json.dumps(probe(args.provider, args.query), ensure_ascii=False))
         return
     def run(name):
         try:
             command = [sys.executable, __file__, "--provider", name, "--query", args.query]
-            if args.playback:
-                command.append("--playback")
             process = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", timeout=150,
                                      env={**os.environ, "PYTHONIOENCODING": "utf-8"})
             return json.loads(process.stdout.strip().splitlines()[-1])

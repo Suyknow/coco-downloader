@@ -6,6 +6,7 @@ from typing import Any
 from urllib.parse import quote, unquote, urljoin, urlparse
 
 from app.models.music import LyricLine
+from app.services.audio import checked_audio_extension
 
 AUDIO_CONTENT_TYPES = ("audio/", "application/octet-stream")
 AUDIO_EXTENSIONS = {"aac", "flac", "m4a", "mp3", "ogg", "opus", "wav"}
@@ -16,9 +17,8 @@ def clean_text(value: str | None) -> str:
 
 
 def extract_ext(url: str, fallback: str = "mp3") -> str:
-    clean_url = url.split("?", 1)[0]
-    suffix = clean_url.rsplit(".", 1)
-    return suffix[1] if len(suffix) > 1 and suffix[1] else fallback
+    suffix = urlparse(url).path.rsplit(".", 1)[-1].lower()
+    return suffix if suffix in AUDIO_EXTENSIONS else fallback
 
 
 def absolute_url(value: str | None, base_url: str) -> str | None:
@@ -28,7 +28,13 @@ def absolute_url(value: str | None, base_url: str) -> str | None:
 
 
 def is_http_url(value: Any) -> bool:
-    return isinstance(value, str) and value.startswith("http")
+    if not isinstance(value, str):
+        return False
+    try:
+        parsed = urlparse(value)
+        return parsed.scheme in {"http", "https"} and bool(parsed.hostname) and not parsed.username and not parsed.password
+    except ValueError:
+        return False
 
 
 def validate_audio_url(
@@ -39,7 +45,7 @@ def validate_audio_url(
     timeout: int = 15,
     verify: bool = True,
 ) -> str:
-    request_headers = {"Range": "bytes=0-1", **(headers or {})}
+    request_headers = {**(headers or {}), "Range": "bytes=0-4095"}
     response = http_client.get_response(
         url,
         headers=request_headers,
@@ -49,11 +55,10 @@ def validate_audio_url(
     )
     try:
         content_type = str(response.headers.get("content-type") or "").lower()
-        if content_type and not content_type.startswith(AUDIO_CONTENT_TYPES):
-            raise ValueError(f"Non-audio content type: {content_type}")
         final_url = response.url
-        if not content_type and extract_ext(final_url).lower() not in AUDIO_EXTENSIONS:
-            raise ValueError("Audio response has no recognizable content type or extension")
+        # Inspect a bounded prefix: MIME can mislabel valid audio or error pages.
+        prefix = next(response.iter_content(chunk_size=4096), b"")
+        checked_audio_extension(prefix, content_type, url=final_url)
         return final_url
     finally:
         response.close()

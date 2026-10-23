@@ -2,16 +2,14 @@
 import Image from "next/image";
 import { useState } from "react";
 import { Music2 } from "lucide-react";
-import { playlistCoverUrl } from "@/lib/playlists/cover";
 import styles from "./artwork.module.css";
 
 export function Artwork({ url, className = "" }: { url?: string; className?: string }) {
-  const source = playlistCoverUrl(url);
+  const source = url;
   const [failure, setFailure] = useState({ source: "", attempt: 0 });
   const attempt = failure.source === source ? failure.attempt : 0;
   const direct = url?.replace(/^http:/, "https:");
-  // Try the same-origin proxy first, then the original CDN URL if a transient proxy
-  // failure occurs. A changed URL starts fresh rather than keeping a stale error.
+  // Retry HTTP artwork over HTTPS. A changed URL starts with a fresh attempt.
   const sources = [...new Set([source, direct].filter((value): value is string => Boolean(value)))];
   const current = sources[attempt];
   return <span className={`${styles.artwork} ${className}`}>

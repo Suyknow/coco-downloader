@@ -1,53 +1,67 @@
 # coding: utf-8
 from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QFont
-from PyQt5.QtWidgets import QVBoxLayout, QHBoxLayout, QLabel, QToolButton, QMenu
+from PyQt5.QtWidgets import QVBoxLayout, QHBoxLayout, QLabel, QActionGroup
 
-from qfluentwidgets import CaptionLabel, IndeterminateProgressBar, SearchLineEdit, SimpleCardWidget, setFont
-from app.services.providers import PROVIDER_DISPLAY_NAMES, PROVIDER_GROUPS
+from qfluentwidgets import (Action, CaptionLabel, DropDownPushButton,
+                           IndeterminateProgressBar, RoundMenu, SearchLineEdit,
+                           SimpleCardWidget, setFont)
+from app.services.channels import MUSIC_PLATFORMS, get_channel, get_platform
+from app.common.config import cfg
 
 
-class ChannelMenuButton(QToolButton):
+class ChannelMenuButton(DropDownPushButton):
     """Music platform menu with a submenu for each search channel."""
 
     currentTextChanged = pyqtSignal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._provider_id = "netease"
+        self._provider_id = "gdstudio-netease"
         self._actions = {}
-        menu = QMenu(self)
-        menu.setToolTipsVisible(True)
-        for platform, channels in PROVIDER_GROUPS.items():
-            submenu = menu.addMenu(platform)
-            submenu.setToolTipsVisible(True)
-            if not channels:
-                submenu.addAction("暂无可用渠道（解析异常，暂时停用）").setEnabled(False)
-            for label, provider_id in channels:
-                action = submenu.addAction(label)
+        menu = RoundMenu(parent=self)
+        self._action_group = QActionGroup(self)
+        self._action_group.setExclusive(True)
+        for platform in MUSIC_PLATFORMS:
+            submenu = RoundMenu(platform.name, self)
+            if not platform.channels:
+                action = Action("暂无可用渠道", submenu)
+                action.setEnabled(False)
+                submenu.addAction(action)
+            for channel in platform.channels:
+                provider_id = channel.id
+                action = Action(channel.name, submenu)
                 action.setCheckable(True)
                 action.setChecked(provider_id == self._provider_id)
-                if provider_id == "livepoo":
-                    action.setToolTip("前往源站使用网盘保存，不支持试听或自动批量下载")
+                self._action_group.addAction(action)
+                if channel.delivery == "source-page":
+                    action.setToolTip("前往源站使用网盘保存，不支持自动批量下载")
                 else:
-                    action.setToolTip("客户端支持直接下载与批量下载")
+                    action.setToolTip("下载以歌曲实际可用音质为准")
                 action.triggered.connect(lambda checked=False, key=provider_id: self._select_channel(key))
+                submenu.addAction(action)
                 self._actions[provider_id] = action
+            menu.addMenu(submenu)
         self.setMenu(menu)
-        self.setPopupMode(QToolButton.InstantPopup)
-        self.setText("网易云音乐")
+        self.setCurrentData(cfg.get(cfg.searchChannel))
 
     def currentData(self):
         return self._provider_id
 
-    def _select_channel(self, provider_id):
+    def setCurrentData(self, provider_id):
+        get_channel(provider_id)
         self._provider_id = provider_id
-        for key, action in self._actions.items():
-            action.setChecked(key == provider_id)
-        label = next(name for name, key in PROVIDER_DISPLAY_NAMES.items() if key == provider_id)
-        self.setText(label.split(" / ", 1)[0])
-        self.setToolTip(label)
-        self.currentTextChanged.emit(label)
+        self._actions[provider_id].setChecked(True)
+        channel, platform = get_channel(provider_id), get_platform(provider_id)
+        self.setText(f"{platform.name} / {channel.name}")
+        self.setToolTip(self.text())
+
+    def _select_channel(self, provider_id):
+        if provider_id == self._provider_id:
+            return
+        self.setCurrentData(provider_id)
+        cfg.set(cfg.searchChannel, provider_id)
+        self.currentTextChanged.emit(self.text())
 
 
 class SearchCard(SimpleCardWidget):
@@ -71,13 +85,13 @@ class SearchCard(SimpleCardWidget):
         self.searchInput = SearchLineEdit(self)
         self.platformComboBox = ChannelMenuButton(self)
         self.progressBar = IndeterminateProgressBar(self)
-        self.previewHintLabel = CaptionLabel(self.tr("力音当前提供网盘入口，请前往源站保存；不支持试听或批量下载"), self)
-        self.stabilityLabel = CaptionLabel(self.tr("搜索、播放与下载依赖第三方渠道的稳定性，不保证持续有效；失败时请重试或切换渠道。"), self)
+        self.stabilityLabel = CaptionLabel(self.tr("搜索与下载依赖第三方渠道的稳定性，不保证持续有效；失败时请重试或切换渠道。"), self)
         self.stabilityLabel.setWordWrap(True)
         self.stabilityLabel.setAlignment(Qt.AlignCenter)
 
         self._init_ui()
         self._connect_signals()
+        self._on_platform_changed(self.platformComboBox.text())
 
     def _init_ui(self):
         setFont(self.titleLabel, 24, QFont.Weight.Bold)
@@ -101,8 +115,6 @@ class SearchCard(SimpleCardWidget):
 
         self.progressBar.hide()
         self.progressBar.pause()
-        self.previewHintLabel.hide()
-        self.previewHintLabel.setAlignment(Qt.AlignCenter)
 
         self.vBoxLayout.setContentsMargins(24, 24, 24, 24)
         self.vBoxLayout.setSpacing(12)
@@ -111,12 +123,12 @@ class SearchCard(SimpleCardWidget):
         self.vBoxLayout.addSpacing(8)
         self.vBoxLayout.addLayout(self.searchLayout)
         self.vBoxLayout.addWidget(self.stabilityLabel)
-        self.vBoxLayout.addWidget(self.previewHintLabel)
         self.vBoxLayout.addWidget(self.progressBar)
 
     def _connect_signals(self):
         self.searchInput.returnPressed.connect(self._on_return_pressed)
         self.platformComboBox.currentTextChanged.connect(self._on_platform_changed)
+
 
     def _on_search(self, keyword: str):
         """Handle search action"""
@@ -145,9 +157,6 @@ class SearchCard(SimpleCardWidget):
         self.searchInput.setEnabled(enabled)
         self.platformComboBox.setEnabled(enabled)
 
-    def set_preview_hint_visible(self, visible: bool) -> None:
-        """Show unsupported-preview hint below the search box"""
-        self.previewHintLabel.setVisible(visible)
 
     def _on_platform_changed(self, platform: str) -> None:
         provider_id = self.platformComboBox.currentData()
@@ -155,6 +164,6 @@ class SearchCard(SimpleCardWidget):
             "livepoo": "力音当前提供网盘入口，需前往源站保存；不支持试听或批量下载。",
             "gequhai": "搜索歌曲海曲库，客户端支持直接下载和批量下载。",
         }
-        label = next((name for name, key in PROVIDER_DISPLAY_NAMES.items() if key == provider_id), provider_id)
-        self.stabilityLabel.setText(f"{label} · {hints.get(provider_id, '客户端支持直接下载和批量下载；渠道失败时请尝试同平台的其他渠道。')}")
+        label = self.platformComboBox.text()
+        self.stabilityLabel.setText(f"{label} · {hints.get(provider_id, '仅使用所选渠道搜索和下载，不会自动切换渠道。')}")
         self.platformChanged.emit(provider_id)

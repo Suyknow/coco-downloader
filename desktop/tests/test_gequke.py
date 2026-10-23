@@ -1,7 +1,6 @@
 import unittest
 from unittest.mock import MagicMock, patch
 
-from app.models.music import LyricData, MusicItem
 from app.services.providers import PROVIDER_GROUPS, get_provider
 from app.services.providers.gequke import GequkeProvider
 
@@ -42,20 +41,6 @@ class GequkeTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'ID 无效'):
             provider.get_play_info('../326')
 
-    def test_lyrics_use_matched_official_id_and_fall_back_to_page(self):
-        session = MagicMock()
-        session.__enter__.return_value = session
-        session.request.return_value = PAGE
-        official = MagicMock()
-        official.search.return_value = [MusicItem('wrong', '晴天', '其他歌手', 'bodian'), MusicItem('official-rid', '晴天', '周杰伦', 'bodian')]
-        official.get_lyric.return_value = LyricData('official-rid', 'bodian', [], '[00:00]官方歌词')
-        with patch('app.services.providers.gequke._Session', return_value=session), patch('app.services.providers.gequke.BodianProvider', return_value=official):
-            lyric = GequkeProvider().get_lyric('326')
-            official.get_lyric.assert_called_once_with('official-rid')
-            self.assertEqual((lyric.songid, lyric.provider, lyric.lrc), ('326', 'gequke', '[00:00]官方歌词'))
-            official.search.side_effect = ValueError('offline')
-            fallback = GequkeProvider().get_lyric('326')
-            self.assertEqual(fallback.lines[0].text, '页面歌词')
 
 
 if __name__ == '__main__':

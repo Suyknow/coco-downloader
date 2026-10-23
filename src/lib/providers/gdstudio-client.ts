@@ -40,7 +40,7 @@ export async function requestGD<T>(params: Record<string, string>): Promise<T> {
   // must not prevent unrelated channels or application startup from working.
   let client: typeof import('impers');
   try { client = await import('impers'); }
-  catch { throw new Error('GD音乐台请求组件未就绪，请运行 npm run setup:gdstudio 或配置 LIBCURL_PATH'); }
+  catch { throw new Error('GD音乐台请求组件未就绪，请检查原生请求组件或配置 LIBCURL_PATH'); }
   const session = new client.Session({
     impersonate: 'chrome150', timeout: 20,
     headers: { Referer: `${BASE}/`, Origin: BASE, 'X-Requested-With': 'XMLHttpRequest' },
@@ -62,7 +62,7 @@ export async function requestGD<T>(params: Record<string, string>): Promise<T> {
   } catch (error) {
     if (error instanceof Error && error.message.startsWith('GD音乐台')) throw error;
     if (error instanceof Error && error.name === 'ImpersonateError') {
-      throw new Error('GD音乐台原生请求库未就绪，请运行 npm run setup:gdstudio 或配置 LIBCURL_PATH');
+      throw new Error('GD音乐台原生请求库未就绪，请检查原生请求组件或配置 LIBCURL_PATH');
     }
     throw new Error('GD音乐台请求失败或超时，请稍后重试或切换渠道');
   } finally {

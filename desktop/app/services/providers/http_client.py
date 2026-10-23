@@ -39,7 +39,9 @@ def _is_dns_error(error: BaseException) -> bool:
 class ProviderHttpClient:
     def __init__(self) -> None:
         self._session = requests.Session()
-        self._session.trust_env = False
+        # Match Web's Axios transport: honor user-configured HTTP(S)_PROXY and
+        # NO_PROXY rather than silently bypassing their network configuration.
+        self._session.trust_env = True
 
     def get_json(
         self,

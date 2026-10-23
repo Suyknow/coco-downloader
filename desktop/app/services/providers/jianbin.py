@@ -77,6 +77,7 @@ class JianbinProvider(MusicProvider):
             raise ValueError("Invalid play url")
         return PlayInfo(url=final_url, type=extract_ext(final_url))
 
+
     def _map_item(self, item: Any) -> MusicItem | None:
         if not isinstance(item, dict):
             return None

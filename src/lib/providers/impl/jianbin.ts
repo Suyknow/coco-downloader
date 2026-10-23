@@ -159,18 +159,6 @@ export class JianbinProvider implements MusicProvider {
     }
   }
 
-  async getByOfficialId(id: string): Promise<PlayInfo> {
-    const cookie = await this.bootstrapSession();
-    const payload = await this.requestSearch(id, cookie, 'id');
-    const item = Array.isArray(payload.data) ? payload.data.find(item => {
-      if (String(item.songid || '') === id) return true;
-      try { return new URL(toAbsoluteUrl(item.url)).searchParams.get('id') === id; }
-      catch { return false; }
-    }) : undefined;
-    if (!item?.url) throw new Error('煎饼暂未提供此歌曲的音频，请尝试渠道搜索或其他渠道');
-    return this.getPlayInfo(encodeURIComponent(toAbsoluteUrl(item.url)));
-  }
-
   async getPlayInfo(id: string): Promise<PlayInfo> {
     try {
       const url = normalizeIdToUrl(id);

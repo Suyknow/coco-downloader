@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { searchBySource } from '@/lib/providers/official-source';
+import { getProvider } from '@/lib/providers';
 import { providerErrorMessage } from '@/lib/api-error';
 
 export async function GET(request: NextRequest) {
@@ -14,10 +14,10 @@ export async function GET(request: NextRequest) {
   }
 
   const resolvedProviderName =
-    providerName && providerName !== 'all' ? providerName : 'netease';
+    providerName && providerName !== 'all' ? providerName : 'gdstudio-netease';
   try {
-    const source = searchParams.get('source') === 'official' ? 'official' : 'channel';
-    const items = await searchBySource(resolvedProviderName, q, limit, offset, source);
+    if (searchParams.has('source') && searchParams.get('source') !== 'channel') return NextResponse.json({error:'不支持该搜索来源'}, {status:400});
+    const items = await getProvider(resolvedProviderName).search(q, limit, offset);
     return NextResponse.json({ items });
   } catch (error) {
     return NextResponse.json({ error: providerErrorMessage(error) }, { status: 502 });

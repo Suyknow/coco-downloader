@@ -5,48 +5,6 @@ from PyQt5.QtWidgets import QButtonGroup
 
 from qfluentwidgets import BodyLabel, MessageBoxBase, RadioButton, SubtitleLabel
 
-NETEASE_QUALITY_OPTIONS = [
-    ("standard", "标准音质"),
-    ("exhigh", "极高音质"),
-    ("lossless", "无损音质"),
-]
-
-
-class NeteaseQualityDialog(MessageBoxBase):
-    """Netease official download quality selector."""
-
-    def __init__(self, parent=None) -> None:
-        super().__init__(parent)
-        self.selected_level = "lossless"
-        self.button_group = QButtonGroup(self)
-        self.title_label = SubtitleLabel(self.tr("选择下载音质"), self)
-        self.desc_label = BodyLabel(self.tr("当前 Meting 渠道支持标准、极高和无损选项，实际音质以返回文件为准。"), self)
-
-        self._init_widget()
-
-    def _init_widget(self) -> None:
-        self.yesButton.setText(self.tr("开始下载"))
-        self.cancelButton.setText(self.tr("取消"))
-        self.viewLayout.addWidget(self.title_label)
-        self.viewLayout.addWidget(self.desc_label)
-
-        for index, (level, label) in enumerate(NETEASE_QUALITY_OPTIONS):
-            button = RadioButton(label, self)
-            button.setProperty("level", level)
-            button.setFixedHeight(32)
-            self.button_group.addButton(button)
-            self.viewLayout.addWidget(button)
-            if level == self.selected_level:
-                button.setChecked(True)
-
-        self.button_group.buttonClicked.connect(self._on_button_clicked)
-
-    def _on_button_clicked(self, button: RadioButton) -> None:
-        level = button.property("level")
-        if isinstance(level, str):
-            self.selected_level = level
-
-
 class DownloadOptionDialog(MessageBoxBase):
     """Download parser or quality selector built from provider options."""
 

@@ -41,7 +41,7 @@ class GDStudioTests(unittest.TestCase):
             self.assertEqual(info.type, "flac")
             self.assertEqual(request.call_args.args[0], {"types": "url", "id": "12345", "br": "999"})
         lyric = LyricData("66842", "netease", [], "[00:00]歌词")
-        with patch("app.services.providers.gdstudio.NeteaseOfficialProvider.get_lyric", return_value=lyric) as official:
+        with patch("app.services.providers.gdstudio.NeteaseLyrics.get_lyric", return_value=lyric) as official:
             result = provider.get_lyric("66842")
             official.assert_called_once_with("66842", None)
             self.assertEqual(result.provider, provider.name)

@@ -1,30 +1,21 @@
 "use client";
-
-import React, { useState, useRef, useEffect } from "react";
-import { SearchSourceChoice } from "@/components/SearchSourceChoice";
+import React, { useRef, useState } from "react";
+import { Download, ListChecks, Loader2, Music, Play } from "lucide-react";
+import { message } from "antd";
 import { SearchField } from "@/components/SearchField";
-import { SearchMorph } from "@/components/SearchMorph";
-import { useDiscoveryMode } from "@/components/DiscoveryMode";
-import { PlaylistDiscovery } from "@/components/PlaylistDiscovery";
-import { playlistApi } from "@/lib/playlists/client";
-import { playlistPlatform, withPlaylistChannels } from "@/lib/playlists/channel-resolver";
+import { ChannelSelect } from "@/components/ChannelSelect";
 import { SongList, SongRowActions, SongListToolbar, SongActionButton } from "@/components/music/SongList";
 import { SongBatchBar } from "@/components/music/SongBatchBar";
-import { Loader2, Play, Download, ListChecks, Music, ExternalLink } from "lucide-react";
-import { motion, AnimatePresence } from "framer-motion";
-import { cn } from "@/lib/utils";
-import { MusicItem } from "@/types/music";
-import { PlayerBar } from "@/components/PlayerBar";
-import { ChannelSelect } from "@/components/ChannelSelect";
-import { getMusicChannel, getMusicPlatform, supportsBatchDownload } from "@/lib/music-channels";
-import { BrowserDownloadNotice } from "@/components/BrowserDownloadNotice";
 import { DownloadDrawer } from "@/components/DownloadDrawer";
+import { BrowserDownloadNotice } from "@/components/BrowserDownloadNotice";
 import { QualitySelectModal } from "@/components/QualitySelectModal";
-import { FullscreenPlayerDrawer } from "@/components/FullscreenPlayerDrawer";
-import { DownloadTask } from "@/types/download";
+import { getMusicChannel, getMusicPlatform, supportsBatchDownload } from "@/lib/music-channels";
 import { BrowserDirectDownloadError, fetchAudioBlob } from "@/lib/browser-download";
-import { message } from "antd";
-
+import { PlayerBar } from '@/components/PlayerBar';
+import { FullscreenPlayerDrawer } from '@/components/FullscreenPlayerDrawer';
+import { useWebPlayer } from '@/hooks/useWebPlayer';
+import type { MusicItem } from "@/types/music";
+import type { DownloadTask } from "@/types/download";
 async function fetchJson(url: string) {
   const response = await fetch(url, { signal: AbortSignal.timeout(35000) });
   const data = await response.json();
@@ -58,11 +49,6 @@ type QualityModalState = {
   items: MusicItem[];
   qualityItemCount: number;
   optionKind: "quality" | "downloadSource";
-};
-
-type LyricLine = {
-  time: number;
-  text: string;
 };
 
 function buildQualityValue(extra?: ProviderExtra) {
@@ -107,56 +93,15 @@ function collectQualityOptions(items: MusicItem[]) {
 }
 
 function applyQualityChoice(item: MusicItem, value: string) {
-  const extra = getProviderExtra(item);
-  if (!extra) return item;
-  const match =
-    extra.qualityOptions?.find((option) => option.value === value) ||
-    extra.qualityOptions?.[0];
+  const match = getProviderExtra(item)?.qualityOptions?.find(option => option.value === value);
   if (!match) return item;
-  if (item.provider === "netease" || item.provider === "gdstudio-netease") {
-    return {
-      ...item,
-      extra: {
-        ...(item.extra as Record<string, unknown>),
-        selectedLevel: match.value,
-        level: match.value,
-      },
-    };
-  }
-  if (item.provider === "qq" || item.provider === "kugou") {
-    return {
-      ...item,
-      extra: {
-        ...(item.extra as Record<string, unknown>),
-        selectedParser: match.value,
-        selectedFormat: match.format,
-      },
-    };
-  }
-  if (item.provider !== "joox") return item;
-  return {
-    ...item,
-    extra: {
-      ...(item.extra as Record<string, unknown>),
-      selectedQuality: match.quality,
-      selectedFormat: match.format,
-    },
-  };
+  if (item.provider === 'qq' || item.provider === 'kugou') return { ...item, extra: { ...(item.extra as Record<string, unknown>), selectedParser: match.value, selectedFormat: match.format } };
+  if (item.provider !== 'netease' && item.provider !== 'gdstudio-netease') return item;
+  return { ...item, extra: { ...(item.extra as Record<string, unknown>), selectedLevel: match.value, level: match.value } };
 }
 
 function getQualityItems(items: MusicItem[]) {
   return items.filter((item) => (getProviderExtra(item)?.qualityOptions || []).length > 0);
-}
-
-function buildUrlRequest(item: MusicItem) {
-  const params = new URLSearchParams({
-    id: item.id,
-    provider: item.provider || "netease",
-  });
-  if (item.extra !== undefined) {
-    params.set("extra", JSON.stringify(item.extra));
-  }
-  return `/api/url?${params.toString()}`;
 }
 
 function getProviderExtra(item: MusicItem): ProviderExtra | undefined {
@@ -164,379 +109,67 @@ function getProviderExtra(item: MusicItem): ProviderExtra | undefined {
   return item.extra as ProviderExtra;
 }
 
-const SourceLinkButton = ({ item }: { item: MusicItem }) => {
-  const [loading, setLoading] = useState(false);
-
-  const handleClick = async (e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (loading) return;
-    
-    setLoading(true);
-    try {
-      const data = await fetchJson(buildUrlRequest(item));
-      if (data.url) {
-        window.open(data.url, '_blank');
-      } else {
-        void message.error(data.error || '无法获取源链接');
-      }
-    } catch (error) {
-      console.error(error);
-      notifyError(error, '获取链接失败');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <button
-      onClick={handleClick}
-      className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-full text-[#404752] transition-colors hover:bg-[#005faa]/10 hover:text-[#005faa]"
-      title="打开源文件链接"
-    >
-      {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <ExternalLink className="w-5 h-5" />}
-    </button>
-  );
-};
-
-type PlayMode = "order" | "shuffle" | "single";
-const SEARCH_PAGE_SIZE = 20;
 
 export default function Home() {
+  const { activeMusic, playing, resolvingMusicId, currentTime, duration, volume, playMode, lyricLines, lyricLoading, playerDrawerOpen, setPlayerDrawerOpen, handlePlay, handleSeek, setVolume, togglePlayMode, canPrev, canNext, handlePrev, handleNext } = useWebPlayer();
   const [query, setQuery] = useState("");
-  const [provider, setProvider] = useState("netease");
-  const [searchSource, setSearchSource] = useState<"channel" | "official">("channel");
+  const [provider, setProvider] = useState("gdstudio-netease");
   const [results, setResults] = useState<MusicItem[]>([]);
-  const [playlistQueue, setPlaylistQueue] = useState<MusicItem[] | null>(null);
-  const playbackItems = playlistQueue ?? results;
   const [resultFilter, setResultFilter] = useState("");
-  const visibleResults = results.filter(item => `${item.title} ${item.artist} ${item.album || ""}`.toLowerCase().includes(resultFilter.trim().toLowerCase()));
-  const [loading, setLoading] = useState(false);
-  
-  // Playback State
-  const [activeMusic, setActiveMusic] = useState<MusicItem | null>(null);
-  const [playing, setPlaying] = useState(false);
-  const [currentTime, setCurrentTime] = useState(0);
-  const [duration, setDuration] = useState(0);
-  const [volume, setVolume] = useState(1);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
-  const [playMode, setPlayMode] = useState<PlayMode>("order");
-  const [shuffleOrder, setShuffleOrder] = useState<string[]>([]);
-  const [shuffleIndex, setShuffleIndex] = useState(-1);
-  const handlePlayRef = useRef<(item: MusicItem, queue?: MusicItem[], retry?: boolean) => void>(() => undefined);
-  const getNextIndexRef = useRef<() => number>(() => -1);
-
-  const { discovery, searchSlot, setImportedPlaylist } = useDiscoveryMode();
-  const [playlistLink, setPlaylistLink] = useState("");
-  const [importingPlaylist, setImportingPlaylist] = useState(false);
-  const playlistImportRequest = useRef<AbortController | null>(null);
-  useEffect(() => {
-    if (!discovery) playlistImportRequest.current?.abort();
-    return () => playlistImportRequest.current?.abort();
-  }, [discovery]);
-  async function handlePlaylistImport(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!playlistLink.trim()) { void message.info("请先粘贴歌单链接"); return; }
-    if (importingPlaylist) return;
-    const controller = new AbortController();
-    playlistImportRequest.current = controller;
-    setImportingPlaylist(true);
-    try {
-      const detail = await playlistApi.import(playlistLink.trim(), controller.signal);
-      if (!controller.signal.aborted) { setImportedPlaylist(detail); window.scrollTo({ top: 0, behavior: "instant" }); }
-    } catch (error) {
-      if (!controller.signal.aborted) notifyError(error, "歌单导入失败，请确认链接公开可访问", "playlist-import");
-    } finally {
-      if (playlistImportRequest.current === controller) { setImportingPlaylist(false); playlistImportRequest.current = null; }
-    }
-  }
-  const homeSearchAnchor = useRef<HTMLDivElement>(null);
-  const [searched, setSearched] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [downloadingCount, setDownloadingCount] = useState(0);
-  
-  // Download Manager State
+  const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [searched, setSearched] = useState(false);
+  const [hasMoreResults, setHasMoreResults] = useState(false);
   const [downloadTasks, setDownloadTasks] = useState<DownloadTask[]>([]);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
-  const [resolvingMusicId, setResolvingMusicId] = useState<string | null>(null);
+  const [downloadingCount, setDownloadingCount] = useState(0);
   const [qualityModal, setQualityModal] = useState<QualityModalState | null>(null);
   const [selectedQualityValue, setSelectedQualityValue] = useState("");
-  const [playerDrawerOpen, setPlayerDrawerOpen] = useState(false);
-  const [playerDrawerSession, setPlayerDrawerSession] = useState(0);
-  const [lyricLines, setLyricLines] = useState<LyricLine[]>([]);
-  const [lyricLoading, setLyricLoading] = useState(false);
-  const [hasMoreResults, setHasMoreResults] = useState(false);
-  const [loadingMore, setLoadingMore] = useState(false);
+  const requestId = useRef(0);
   const activeChannel = getMusicChannel(provider);
   const activePlatform = getMusicPlatform(provider);
   const batchSupported = supportsBatchDownload(provider);
-  const showBrowserDownloadNotice = activeChannel?.download === 'browser' || downloadTasks.some(task =>
-    task.musicItem.provider === provider && task.delivery !== 'source-page' && (task.status === 'browser-ready' || task.status === 'handed-off')
-  );
-
+  const visibleResults = results.filter(item => `${item.title} ${item.artist} ${item.album || ""}`.toLowerCase().includes(resultFilter.trim().toLowerCase()));
   const changeChannel = (id: string) => {
-    setProvider(id);
-    setResults([]);
-    setSelectedIds(new Set());
-    setHasMoreResults(false);
-    setSearched(false);
+    requestId.current++;
+    setProvider(id); setResults([]); setSelectedIds(new Set());
+    setHasMoreResults(false); setSearched(false); setResultFilter("");
   };
-
-  const changeSearchSource = (source: "channel" | "official") => {
-    if (source === searchSource) return;
-    setSearchSource(source);
-    setResults([]);
-    setResultFilter("");
-    setSelectedIds(new Set());
-    setHasMoreResults(false);
-    setSearched(false);
-  };
-
-  const openPlayerDrawer = () => {
-    setPlayerDrawerSession((session) => session + 1);
-    setPlayerDrawerOpen(true);
-  };
-
-  const buildShuffleOrder = (ids: string[]) => {
-    const next = [...ids];
-    for (let i = next.length - 1; i > 0; i -= 1) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [next[i], next[j]] = [next[j], next[i]];
-    }
-    return next;
-  };
-
   const fetchSearchPage = async (offset: number) => {
-    const params = new URLSearchParams({
-      q: query.trim(),
-      provider,
-      source: searchSource,
-      limit: String(SEARCH_PAGE_SIZE),
-      offset: String(offset),
-    });
-    const data = await fetchJson(`/api/search?${params.toString()}`);
-    const items = Array.isArray(data.items) ? data.items : [];
-    setHasMoreResults(items.length === SEARCH_PAGE_SIZE);
-    return items as MusicItem[];
+    const data = await fetchJson(`/api/search?${new URLSearchParams({q:query.trim(),provider,limit:"20",offset:String(offset)})}`);
+    return (Array.isArray(data.items) ? data.items : []) as MusicItem[];
   };
-
-  const handleSearch = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!query.trim()) return;
-
-    setLoading(true);
-    setResultFilter("");
-    setSearched(true);
-    setResults([]);
-    setSelectedIds(new Set());
-    setHasMoreResults(false);
-    
+  const handleSearch = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!query.trim() || loading) return;
+    const id = ++requestId.current;
+    setLoading(true); setSearched(true); setResults([]); setSelectedIds(new Set()); setResultFilter(""); setHasMoreResults(false);
     try {
       const items = await fetchSearchPage(0);
-      setResults(items);
-      if (!items.length) void message.warning("未找到歌曲，或第三方渠道暂不可用，请更换关键词或渠道");
-    } catch (err) {
-      console.error(err);
-      notifyError(err, "搜索失败，请重试或切换渠道");
-    } finally {
-      setLoading(false);
-    }
+      if (id === requestId.current) { setResults(items); setHasMoreResults(items.length === 20); }
+    } catch (error) { notifyError(error, "搜索失败，请重试或切换渠道"); }
+    finally { setLoading(false); }
   };
-
   const handleLoadMore = async () => {
-    if (loadingMore || loading || !query.trim()) return;
-
+    if (loading || loadingMore || !hasMoreResults) return;
+    const id = requestId.current;
     setLoadingMore(true);
     try {
       const items = await fetchSearchPage(results.length);
-      setResults((prev) => [...prev, ...items]);
-    } catch (err) {
-      console.error(err);
-      notifyError(err, "搜索失败，请重试或切换渠道");
-    } finally {
-      setLoadingMore(false);
-    }
-  };
-
-  const syncShuffleIndex = (id: string, queue = playbackItems) => {
-    const index = shuffleOrder.indexOf(id);
-    if (index >= 0) {
-      setShuffleIndex(index);
-      return;
-    }
-    if (queue.length > 0) {
-      const ids = queue.map(r => r.id);
-      const nextOrder = buildShuffleOrder(ids);
-      setShuffleOrder(nextOrder);
-      setShuffleIndex(nextOrder.indexOf(id));
-    } else {
-      setShuffleIndex(-1);
-    }
-  };
-
-  const playRequestRef = useRef(0);
-  const playControllerRef = useRef<AbortController | null>(null);
-  const playbackResolvingRef = useRef(false);
-  const playbackSessionRef = useRef<{ item: MusicItem; queue?: MusicItem[]; attempted: Set<string> } | null>(null);
-  useEffect(() => () => { playControllerRef.current?.abort(); }, []);
-  const handlePlay = async (item: MusicItem, queue?: MusicItem[], retry = false) => {
-    if (!playlistPlatform(item) && (item.extra as { metadataOnly?: boolean } | undefined)?.metadataOnly) { void message.info("平台未提供该歌曲的解析标识，暂时无法播放"); return; }
-    if (queue) setPlaylistQueue(queue);
-    if (getMusicChannel(item.provider)?.preview === false) {
-      void message.info('此渠道仅提供网盘下载，请前往源站保存，暂不支持试听');
-      return;
-    }
-    if (!retry && resolvingMusicId === item.id) return;
-    playControllerRef.current?.abort();
-    const controller = new AbortController();
-    playControllerRef.current = controller;
-    const requestId = ++playRequestRef.current;
-    const audio = audioRef.current;
-    if (!audio) return;
-    try {
-      if (!retry && activeMusic?.id === item.id && activeMusic.provider === item.provider && audio.src) {
-        if (playing) { audio.pause(); setPlaying(false); return; }
-        playbackResolvingRef.current = true;
-        try { await audio.play(); setPlaying(true); return; }
-        catch (error) {
-          if (!playlistPlatform(item)) throw error;
-          retry = true;
-        }
+      if (id === requestId.current) {
+        setResults(previous => { const seen=new Set(previous.map(i=>i.id)); return [...previous,...items.filter(i=>!seen.has(i.id))]; });
+        setHasMoreResults(items.length === 20 && items.some(i=>!results.some(p=>p.id===i.id)));
       }
-      audio.pause();
-      playbackResolvingRef.current = true;
-      if (!retry) playbackSessionRef.current = { item, queue, attempted: new Set() };
-      setActiveMusic(item);
-      syncShuffleIndex(item.id, queue ?? playbackItems);
-      setPlaying(false);
-      setCurrentTime(0);
-      setResolvingMusicId(item.id);
-      await withPlaylistChannels(item, 'playback', async candidate => {
-        const preview = { ...candidate, extra: { ...(candidate.extra as Record<string, unknown> || {}), usage: 'playback' } };
-        const response = await fetch(buildUrlRequest(preview), { signal: AbortSignal.any([controller.signal, AbortSignal.timeout(35000)]), cache: 'no-store' });
-        const data = await response.json();
-        controller.signal.throwIfAborted();
-        if (!response.ok || !data.url) throw new Error(data.error || '渠道未返回播放链接');
-        if (data.delivery === 'source-page') throw new Error('此渠道仅提供源站下载，不支持试听');
-        audio.src = data.url;
-        audio.load();
-        let timeout: ReturnType<typeof setTimeout> | undefined;
-        try {
-          await Promise.race([
-            audio.play(),
-            new Promise<never>((_, reject) => { timeout = setTimeout(() => reject(new Error('音频加载超时')), 35000); }),
-          ]);
-          controller.signal.throwIfAborted();
-          if (data.cover) setActiveMusic({ ...item, cover: data.cover });
-        } catch (error) {
-          if (requestId === playRequestRef.current) { audio.pause(); audio.removeAttribute('src'); audio.load(); }
-          throw error;
-        } finally { clearTimeout(timeout); }
-      }, { signal: controller.signal, attempted: playbackSessionRef.current?.attempted, onRetry: channel => {
-        void message.info({ key: 'playback-retry', content: `${channel.name} 暂不可用，正在尝试下一渠道` });
-      } });
-      if (requestId === playRequestRef.current) setPlaying(true);
-    } catch (error) {
-      if (requestId !== playRequestRef.current) return;
-      playbackSessionRef.current = null;
-      audio.pause();
-      audio.removeAttribute('src');
-      audio.load();
-      setActiveMusic(null);
-      setPlaying(false);
-      notifyError(error, '播放失败，请重试或切换渠道', 'playback');
-    } finally {
-      if (requestId === playRequestRef.current) { setResolvingMusicId(null); playbackResolvingRef.current = false; }
-    }
+    } catch(error) { notifyError(error, "加载失败"); }
+    finally { setLoadingMore(false); }
   };
-  handlePlayRef.current = handlePlay;
-
-  const handleSeek = (time: number) => {
-    if (audioRef.current) {
-      audioRef.current.currentTime = time;
-      setCurrentTime(time);
-    }
-  };
-
-  useEffect(() => {
-    const ids = playbackItems.map(r => r.id);
-    if (ids.length === 0) {
-      setShuffleOrder([]);
-      setShuffleIndex(-1);
-      return;
-    }
-    setShuffleOrder(buildShuffleOrder(ids));
-  }, [playbackItems]);
-
-  useEffect(() => {
-    if (!activeMusic) {
-      setShuffleIndex(-1);
-      return;
-    }
-    const index = shuffleOrder.indexOf(activeMusic.id);
-    setShuffleIndex(index);
-  }, [activeMusic, shuffleOrder]);
-
-  useEffect(() => {
-    if (audioRef.current) {
-      audioRef.current.volume = volume;
-    }
-  }, [volume]);
-
-  useEffect(() => {
-    if (!activeMusic) {
-      setLyricLines([]);
-      setLyricLoading(false);
-      return;
-    }
-
-    let cancelled = false;
-    setLyricLoading(true);
-    setLyricLines([]);
-
-    const params = new URLSearchParams({
-      id: activeMusic.id,
-      provider: activeMusic.provider || "netease",
-    });
-    params.set("extra", JSON.stringify({
-      ...(activeMusic.extra as Record<string, unknown> || {}),
-      title: activeMusic.title,
-      artist: activeMusic.artist,
-    }));
-
-    fetch(`/api/lyric?${params.toString()}`)
-      .then(async (res) => { if (!res.ok) throw new Error("歌词加载失败"); return res.json(); })
-      .then((data) => {
-        if (cancelled) return;
-        const lines = Array.isArray(data?.lines) ? data.lines : [];
-        setLyricLines(
-          lines.filter(
-            (line: LyricLine) =>
-              typeof line.time === "number" && typeof line.text === "string" && line.text.trim()
-          )
-        );
-      })
-      .catch((error) => {
-        if (!cancelled) {
-          console.error("Lyric load failed", error);
-          void message.warning({ key: "lyrics", content: "歌词加载失败，不影响歌曲播放" });
-          setLyricLines([]);
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setLyricLoading(false);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [activeMusic]);
-
   const executeDownload = async (task: DownloadTask, browserWindow?: Window | null, handoffImmediately = false) => {
     try {
-      await withPlaylistChannels(task.musicItem, 'download', async downloadItem => {
+      const downloadItem = task.musicItem;
         // Update status to downloading
         setDownloadTasks(prev => prev.map(t => 
-          t.id === task.id ? { ...t, status: 'downloading', notice: playlistPlatform(task.musicItem) ? `正在使用 ${getMusicChannel(downloadItem.provider)?.name || downloadItem.provider} 获取音频` : undefined } : t
+          t.id === task.id ? { ...t, status: 'downloading', notice: undefined } : t
         ));
 
         const params = new URLSearchParams({
@@ -576,7 +209,6 @@ export default function Home() {
             setDownloadTasks(prev => prev.map(t => t.id === task.id ? { ...t, progress, receivedBytes, totalBytes } : t));
           });
         } catch (error) {
-          if (playlistPlatform(task.musicItem)) throw error;
           if (!(error instanceof BrowserDirectDownloadError)) throw error;
           setDownloadTasks(prev => prev.map(t => t.id === task.id ? {
             ...t, status: 'browser-ready', progress: 0, receivedBytes: undefined, totalBytes: undefined, notice: error.message,
@@ -597,9 +229,6 @@ export default function Home() {
         setDownloadTasks(prev => prev.map(t => 
           t.id === task.id ? { ...t, fileName, status: 'completed', progress: 100, notice: undefined, error: undefined } : t
         ));
-      }, { onRetry: channel => {
-        setDownloadTasks(prev => prev.map(t => t.id === task.id ? { ...t, progress: 0, receivedBytes: undefined, totalBytes: undefined, sourceUrl: undefined, notice: `${channel.name} 暂不可用，正在尝试下一渠道` } : t));
-      } });
     } catch (err: unknown) {
       if (browserWindow && !browserWindow.closed) browserWindow.close();
       console.error(err);
@@ -675,7 +304,7 @@ export default function Home() {
   };
 
   const startBatchDownload = async (items: MusicItem[]) => {
-    if (items.some(item => !playlistPlatform(item) && !supportsBatchDownload(item.provider))) {
+    if (items.some(item => !supportsBatchDownload(item.provider))) {
       void message.info('所选渠道需逐首交给浏览器下载，不支持网页自动批量下载；可使用客户端');
       return;
     }
@@ -722,21 +351,9 @@ export default function Home() {
   };
 
   const requestDownloadOne = async (item: MusicItem) => {
-    if (!playlistPlatform(item) && (item.extra as { metadataOnly?: boolean } | undefined)?.metadataOnly) { void message.info("平台未提供该歌曲的解析标识，暂时无法下载"); return; }
     const downloadMode = getMusicChannel(item.provider)?.download;
     if (downloadMode !== 'browser' && downloadMode !== 'source-page' && openQualityModal([item], "single")) return;
     await startSingleDownload(item);
-  };
-
-  const requestPlaylistDownloads = async (items: MusicItem[], quality?: string) => {
-    if (!items.length || downloadingCount > 0) return;
-    if (quality !== undefined) {
-      // The command bar applies one default to the batch. Channels without a
-      // quality selector keep their own default rather than using invalid keys.
-      await startBatchDownload(quality === 'default' ? items : items.map(item => applyQualityChoice(item, quality)));
-    } else if (!openQualityModal(items, "batch")) {
-      await startBatchDownload(items);
-    }
   };
 
   const handleBatchDownload = async () => {
@@ -762,309 +379,33 @@ export default function Home() {
     await startBatchDownload(items);
   };
 
-  const currentIndex = activeMusic ? playbackItems.findIndex(r => r.id === activeMusic.id) : -1;
-  const getNextIndex = () => {
-    if (!activeMusic) return -1;
-    if (playMode === "shuffle") {
-      if (shuffleIndex >= 0 && shuffleIndex < shuffleOrder.length - 1) {
-        const nextId = shuffleOrder[shuffleIndex + 1];
-        return playbackItems.findIndex(r => r.id === nextId);
-      }
-      return -1;
-    }
-    if (currentIndex >= 0 && currentIndex < playbackItems.length - 1) {
-      return currentIndex + 1;
-    }
-    return -1;
-  };
-  getNextIndexRef.current = getNextIndex;
 
-  const getPrevIndex = () => {
-    if (!activeMusic) return -1;
-    if (playMode === "shuffle") {
-      if (shuffleIndex > 0) {
-        const prevId = shuffleOrder[shuffleIndex - 1];
-        return playbackItems.findIndex(r => r.id === prevId);
-      }
-      return -1;
-    }
-    if (currentIndex > 0) {
-      return currentIndex - 1;
-    }
-    return -1;
-  };
-
-  const canNext = getNextIndex() >= 0;
-  const canPrev = getPrevIndex() >= 0;
-
-  const handleNext = () => {
-    const nextIndex = getNextIndex();
-    if (nextIndex >= 0) handlePlay(playbackItems[nextIndex]);
-  };
-  const handlePrev = () => {
-    const prevIndex = getPrevIndex();
-    if (prevIndex >= 0) handlePlay(playbackItems[prevIndex]);
-  };
-
-  const togglePlayMode = () => {
-    setPlayMode(prev => {
-      if (prev === "order") return "shuffle";
-      if (prev === "shuffle") return "single";
-      return "order";
-    });
-  };
-
-  useEffect(() => {
-    if (!audioRef.current) {
-      audioRef.current = new Audio();
-    }
-    const audio = audioRef.current;
-
-    const handleTimeUpdate = () => setCurrentTime(audio.currentTime);
-    const handleLoadedMetadata = () => {
-      setDuration(audio.duration);
-
-    };
-    const handleEnded = () => {
-      if (playMode === "single") {
-        if (audioRef.current) {
-          audioRef.current.currentTime = 0;
-          audioRef.current.play()
-            .then(() => setPlaying(true))
-            .catch((error) => { setPlaying(false); notifyError(error, "播放失败", "playback"); });
-        }
-        return;
-      }
-      const nextIndex = getNextIndexRef.current();
-      if (nextIndex >= 0) {
-        handlePlayRef.current(playbackItems[nextIndex]);
-      } else {
-        setPlaying(false);
-      }
-    };
-
-    const handleError = () => {
-      if (playbackResolvingRef.current) return;
-      const session = playbackSessionRef.current;
-      if (session && playlistPlatform(session.item)) {
-        void message.info({ key: 'playback-retry', content: '当前音源无法继续播放，正在切换同平台其他渠道' });
-        handlePlayRef.current(session.item, session.queue, true);
-        return;
-      }
-      setPlaying(false);
-      setResolvingMusicId(null);
-      setActiveMusic(null);
-      void message.error({ key: 'playback', content: '音频无法加载或格式不受支持，请重试或切换渠道', duration: 6 });
-    };
-    audio.addEventListener('error', handleError);
-    audio.addEventListener('timeupdate', handleTimeUpdate);
-    audio.addEventListener('loadedmetadata', handleLoadedMetadata);
-    audio.addEventListener('ended', handleEnded);
-
-    return () => {
-      audio.removeEventListener('error', handleError);
-      audio.removeEventListener('timeupdate', handleTimeUpdate);
-      audio.removeEventListener('loadedmetadata', handleLoadedMetadata);
-      audio.removeEventListener('ended', handleEnded);
-    };
-  }, [playing, playMode, playbackItems]);
-
-  return (
-    <main className="min-h-[calc(100vh-64px)] bg-[#fcf9f8] text-[#1b1b1c] selection:bg-[#d3e3ff] selection:text-[#001c39] pb-36 transition-colors duration-300 dark:bg-[#111315] dark:text-[#f3f0ef]">
-      <div className={cn("mx-auto flex w-full flex-col items-center", discovery ? "max-w-[1360px] px-5 py-9 md:px-10 lg:px-12" : "max-w-[1440px] px-4 py-10 md:px-12")}>
-        <motion.div
-          initial={false}
-          animate={{ opacity: discovery ? 0 : 1 }}
-          transition={{ duration: .28, delay: discovery ? 0 : .2 }}
-          style={{ display: discovery ? "none" : undefined }}
-          className={cn(
-            "flex w-full flex-col items-center justify-center transition-all duration-500",
-            searched ? "mt-0 mb-8" : "min-h-[calc(100vh-220px)]"
-          )}
-        >
-          <div className="mb-6 flex h-24 w-24 items-center justify-center rounded-[28px] bg-[#d3e3ff] text-[#005faa] shadow-[0_8px_24px_rgba(0,0,0,0.04)] dark:bg-[#003f6d] dark:text-[#a3c9ff]">
-            <Music className="h-12 w-12" />
-          </div>
-          <h1 className="mb-2 text-center text-[28px] font-bold leading-9 tracking-normal text-[#1b1b1c] md:text-[32px] md:leading-10 dark:text-[#f3f0ef]">
-            COCO音乐下载站
-          </h1>
-          <p className="mb-8 text-center text-base leading-6 text-[#404752] dark:text-[#c6c6c7]">
-            搜索、播放与下载依赖第三方渠道的稳定性，不保证持续有效；失败时请重试或切换渠道。
-          </p>
-
-          <div ref={homeSearchAnchor} className="home-search-anchor" />
-          <SearchSourceChoice value={searchSource} onChange={changeSearchSource} disabled={loading || loadingMore} />
-          {activeChannel && (
-            <p className="mt-3 w-full max-w-2xl rounded-xl bg-[#d3e3ff]/35 px-4 py-3 text-xs leading-5 text-[#404752] dark:bg-[#003f6d]/25 dark:text-[#c6c6c7]">
-              <span className="mr-2 font-semibold">{activePlatform?.name} · {activeChannel.name}</span>
-              {activeChannel.description}
-            </p>
-          )}
-          {showBrowserDownloadNotice && (
-            <BrowserDownloadNotice className="mt-3 w-full max-w-2xl rounded-xl bg-[#d3e3ff]/35 px-4 py-3 dark:bg-[#003f6d]/25" />
-          )}
-
-          <AnimatePresence>
-            {!searched && (
-              <motion.div 
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, height: 0 }}
-                className="mt-5 flex flex-wrap items-center justify-center gap-2 text-xs font-medium text-[#404752] dark:text-[#c6c6c7]"
-              >
-                <span className="mr-1">热门推荐:</span>
-                {["周杰伦", "林俊杰", "陈奕迅", "孙燕姿"].map((tag) => (
-                  <button
-                    key={tag}
-                    onClick={() => setQuery(tag)}
-                    className="cursor-pointer rounded-full border border-[#c0c7d4]/30 bg-[#f0eded] px-3 py-1.5 text-[#1b1b1c] transition-colors hover:bg-[#eae7e7] dark:border-white/10 dark:bg-[#242526] dark:text-[#f3f0ef] dark:hover:bg-[#303030]"
-                  >
-                    {tag}
-                  </button>
-                ))}
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </motion.div>
-        <SearchMorph discovery={discovery} home={homeSearchAnchor} navigation={searchSlot}>
-          <div className={cn("search-morph-panel", discovery && "is-inactive")} inert={discovery} aria-hidden={discovery}>
-          <SearchField value={query} onChange={setQuery} onSubmit={handleSearch} placeholder="输入歌曲名、歌手或专辑..." label="搜索歌曲" busy={loading} prefix={<ChannelSelect value={provider} onChange={changeChannel} disabled={loading || loadingMore} />} />
-          </div>
-          <div className={cn("import-morph-panel", !discovery && "is-inactive")} inert={!discovery} aria-hidden={!discovery}>
-          <SearchField compact value={playlistLink} onChange={setPlaylistLink} onSubmit={handlePlaylistImport} placeholder="粘贴网易云、QQ音乐或酷狗歌单链接…" label="导入歌单链接" submitLabel="导入" busy={importingPlaylist} icon={<ExternalLink size={18} />} />
-          </div>
-        </SearchMorph>
-        <AnimatePresence>{discovery && <PlaylistDiscovery onPlay={(item, queue) => { void handlePlay(item, queue); }} onDownload={item => { void requestDownloadOne(item); }} onDownloadMany={(items, quality) => { void requestPlaylistDownloads(items, quality); }} downloadingCount={downloadingCount} activeMusic={activeMusic} playing={playing} resolvingId={resolvingMusicId} />}</AnimatePresence>
-        <div className={cn("mx-auto w-full max-w-[1160px] flex-1", discovery && "hidden")}>
-          <AnimatePresence mode="wait">
-            {loading ? (
-              <motion.div 
-                key="loading"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                className="flex flex-col items-center justify-center py-20 text-[#404752] dark:text-[#c6c6c7]"
-              >
-                <Loader2 className="mb-4 h-10 w-10 animate-spin text-[#005faa]" />
-                <p>正在搜索歌曲...</p>
-              </motion.div>
-            ) : results.length > 0 ? (
-              <motion.div 
-                key="results"
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0 }}
-                className="mb-24"
-              >
-                <div className="mb-6">
-                  <div>
-                    <h2 className="text-[28px] font-bold leading-9 text-[#1b1b1c] md:text-[32px] md:leading-10 dark:text-[#f3f0ef]">搜索结果</h2>
-                    <p className="mt-1 text-sm leading-5 text-[#404752] dark:text-[#c6c6c7]">
-                      找到 {results.length} 首相关歌曲 · {activePlatform?.name} / {activeChannel?.name} · {searchSource === "official" ? "官方曲库" : "渠道搜索"}
-                    </p>
-                  </div>
-                </div>
-
-                <SongListToolbar query={resultFilter} onQueryChange={setResultFilter}>
-                  <SongActionButton primary disabled={!visibleResults.length} onClick={() => { void handlePlay(visibleResults[0], visibleResults); }}><Play size={15} />播放列表</SongActionButton>
-                  <SongActionButton disabled={!selectedIds.size} onClick={() => { void handleBatchDownload(); }}><Download size={15} />下载所选{selectedIds.size ? ` ${selectedIds.size} 首` : ""}</SongActionButton>
-                  <SongActionButton onClick={toggleAll}><ListChecks size={15} />选择当前列表</SongActionButton>
-                </SongListToolbar>
-                <SongList items={visibleResults} selectedIds={selectedIds} onToggle={toggleSelection} onToggleAll={toggleAll} activeMusic={activeMusic} playing={playing} resolvingId={resolvingMusicId} onPlay={item => { void handlePlay(item, visibleResults); }} renderActions={item => <SongRowActions item={item} selected={selectedIds.has(item.id)} onToggleSelection={() => toggleSelection(item.id)} onPlay={() => { void handlePlay(item, visibleResults); }} onDownload={() => { void requestDownloadOne(item); }} playing={activeMusic?.id === item.id && activeMusic?.provider === item.provider && playing} resolving={resolvingMusicId === item.id} previewDisabled={getMusicChannel(item.provider)?.preview === false} downloadLabel={getMusicChannel(item.provider)?.download === "source-page" ? "前往源站下载" : getMusicChannel(item.provider)?.download === "browser" ? "交给浏览器下载" : "下载"}><SourceLinkButton item={item} /></SongRowActions>} emptyText="没有匹配的歌曲" />
-                {hasMoreResults ? (
-                  <div className="mt-6 flex justify-center">
-                    <button
-                      type="button"
-                      onClick={handleLoadMore}
-                      disabled={loadingMore}
-                      className="inline-flex cursor-pointer items-center gap-2 rounded-full border border-[#c0c7d4]/40 bg-white px-5 py-2.5 text-sm font-medium text-[#1b1b1c] shadow-sm transition-colors hover:border-[#005faa]/30 hover:bg-[#d3e3ff]/35 disabled:cursor-wait disabled:opacity-70 dark:border-white/10 dark:bg-[#242526] dark:text-[#f3f0ef] dark:hover:bg-[#303030]"
-                    >
-                      {loadingMore ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                      {loadingMore ? "加载中..." : "加载更多"}
-                    </button>
-                  </div>
-                ) : null}
-              </motion.div>
-            ) : searched ? (
-              <motion.div
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                className="py-20 text-center text-[#404752] dark:text-[#c6c6c7]"
-              >
-                <p>未找到相关歌曲，换个关键词试试？</p>
-              </motion.div>
-            ) : null}
-          </AnimatePresence>
-        </div>
-      </div>
-
-      <DownloadDrawer
-          isOpen={isDrawerOpen}
-          onOpen={() => setIsDrawerOpen(true)}
-          onClose={() => setIsDrawerOpen(false)}
-          tasks={downloadTasks}
-          onBrowserHandoff={(taskId) => setDownloadTasks(prev => prev.map(t => t.id === taskId ? { ...t, status: 'handed-off' } : t))}
-          onRemoveTask={(taskId) => setDownloadTasks(prev => prev.filter(t => t.id !== taskId))}
-          onClearCompleted={() => setDownloadTasks(prev => prev.filter(t => t.status === 'downloading' || t.status === 'pending'))}
-        />
-
-      <QualitySelectModal
-        isOpen={Boolean(qualityModal)}
-        title={
-          qualityModal?.optionKind === "downloadSource"
-            ? qualityModal?.mode === "batch"
-              ? "选择批量下载线路"
-              : "选择下载线路"
-            : qualityModal?.mode === "batch"
-              ? "选择批量下载音质"
-              : "选择下载音质"
-        }
-        description={
-          qualityModal?.optionKind === "downloadSource"
-            ? qualityModal?.mode === "batch"
-              ? `本次会把所选线路应用到 ${qualityModal?.qualityItemCount || 0} 首支持线路选择的曲目。`
-              : "请选择本次下载使用的解析线路。"
-            : qualityModal?.mode === "batch"
-              ? `本次会把所选音质应用到 ${qualityModal?.qualityItemCount || 0} 首支持音质选择的曲目。`
-              : "请选择本次下载使用的音质。"
-        }
-        options={qualityModal ? collectQualityOptions(getQualityItems(qualityModal.items)) : []}
-        value={selectedQualityValue}
-        onChange={setSelectedQualityValue}
-        onClose={() => setQualityModal(null)}
-        onConfirm={confirmQualityDownload}
-      />
-
-      {/* Floating Download Toggle Button (Bottom Right) */}
-      <AnimatePresence>
-        {!isDrawerOpen && downloadTasks.length > 0 && (
-          <motion.button
-            initial={{ scale: 0 }}
-            animate={{ scale: 1 }}
-            exit={{ scale: 0 }}
-            onClick={() => setIsDrawerOpen(true)}
-            className="group fixed bottom-6 right-6 z-50 flex h-14 w-14 items-center justify-center rounded-full bg-[#005faa] text-white shadow-lg shadow-[#005faa]/25 transition-all hover:bg-[#0078d4] active:scale-95"
-          >
-            <div className="relative">
-               <Download className="w-6 h-6" />
-               {downloadTasks.some(t => t.status === 'downloading') && (
-                 <span className="absolute -top-1 -right-1 flex h-3 w-3">
-                   <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
-                   <span className="relative inline-flex rounded-full h-3 w-3 bg-red-500"></span>
-                 </span>
-               )}
-            </div>
-            <span className="absolute right-full mr-4 whitespace-nowrap rounded bg-[#303030] px-2 py-1 text-xs text-white opacity-0 transition-opacity group-hover:opacity-100">
-              查看下载任务
-            </span>
-          </motion.button>
-        )}
-      </AnimatePresence>
-
-      <SongBatchBar count={discovery ? 0 : selectedIds.size} busy={downloadingCount} supported={batchSupported} onDownload={() => { void handleBatchDownload(); }} onClear={() => setSelectedIds(new Set())} />
-
+  return <main className="min-h-screen bg-[#fcf9f8] px-4 py-10 pb-28 text-[#1b1b1c] dark:bg-[#111315] dark:text-[#f3f0ef]">
+    <div className="mx-auto max-w-[1160px]">
+      <header className="mx-auto mb-8 flex max-w-3xl flex-col items-center gap-5">
+        <Music size={48} className="text-[#005faa] dark:text-[#a3c9ff]" />
+        <h1 className="text-3xl font-bold">COCO音乐下载站</h1>
+        <p className="text-center text-sm text-slate-500">选择渠道搜索歌曲，支持单曲和批量下载。渠道可用性以实际返回为准。</p>
+        <SearchField value={query} onChange={setQuery} onSubmit={handleSearch} placeholder="输入歌曲名、歌手或专辑" label="搜索歌曲" busy={loading} prefix={<ChannelSelect value={provider} onChange={changeChannel} disabled={loading || loadingMore} />} />
+        {activeChannel && <p className="text-sm text-slate-500">{activePlatform?.name} / {activeChannel.name} · {activeChannel.description}</p>}
+        {activeChannel?.download === 'browser' && <BrowserDownloadNotice />}
+      </header>
+      {loading ? <div className="flex justify-center gap-3 py-16"><Loader2 className="animate-spin" />正在搜索歌曲…</div> : results.length > 0 ? <>
+        <h2 className="mb-5 text-2xl font-semibold">搜索结果 · {results.length} 首</h2>
+        <SongListToolbar query={resultFilter} onQueryChange={setResultFilter}>
+          <SongActionButton primary disabled={!visibleResults.some(item => getMusicChannel(item.provider)?.preview !== false)} onClick={() => { const first = visibleResults.find(item => getMusicChannel(item.provider)?.preview !== false); if (first) void handlePlay(first, visibleResults); }}><Play size={16} />播放列表</SongActionButton>
+          <SongActionButton primary disabled={!selectedIds.size || downloadingCount > 0 || !batchSupported} onClick={() => void handleBatchDownload()}><Download size={16} />下载所选 {selectedIds.size || ""}</SongActionButton>
+          <SongActionButton onClick={toggleAll}><ListChecks size={16} />选择当前列表</SongActionButton>
+        </SongListToolbar>
+        <SongList activeMusic={activeMusic} playing={playing} resolvingId={resolvingMusicId} onPlay={item => void handlePlay(item, visibleResults)} items={visibleResults} selectedIds={selectedIds} onToggle={toggleSelection} onToggleAll={toggleAll} renderActions={item => <SongRowActions onPlay={() => void handlePlay(item, visibleResults)} playing={activeMusic?.id === item.id && activeMusic?.provider === item.provider && playing} resolving={resolvingMusicId === item.id} previewDisabled={getMusicChannel(item.provider)?.preview === false} item={item} selected={selectedIds.has(item.id)} onToggleSelection={() => toggleSelection(item.id)} onDownload={() => void requestDownloadOne(item)} downloadLabel={getMusicChannel(item.provider)?.download === 'source-page' ? '前往源站下载' : '下载'} />} />
+        {hasMoreResults && <div className="mt-6 text-center"><button className="cursor-pointer rounded-full border px-6 py-2" disabled={loadingMore} onClick={() => void handleLoadMore()}>{loadingMore ? '加载中…' : '加载更多'}</button></div>}
+      </> : searched ? <p className="py-16 text-center text-slate-500">未找到相关歌曲，请更换关键词或渠道。</p> : null}
+    </div>
+    <DownloadDrawer isOpen={isDrawerOpen} onOpen={()=>setIsDrawerOpen(true)} onClose={()=>setIsDrawerOpen(false)} tasks={downloadTasks} onBrowserHandoff={id=>setDownloadTasks(prev=>prev.map(t=>t.id===id?{...t,status:'handed-off'}:t))} onRemoveTask={id=>setDownloadTasks(prev=>prev.filter(t=>t.id!==id))} onClearCompleted={()=>setDownloadTasks(prev=>prev.filter(t=>t.status==='downloading'||t.status==='pending'))} />
+    <QualitySelectModal isOpen={Boolean(qualityModal)} title="选择下载音质" description="实际音质以渠道返回文件为准。" options={qualityModal ? collectQualityOptions(getQualityItems(qualityModal.items)) : []} value={selectedQualityValue} onChange={setSelectedQualityValue} onClose={()=>setQualityModal(null)} onConfirm={()=>void confirmQualityDownload()} />
+    <SongBatchBar count={selectedIds.size} busy={downloadingCount} supported={batchSupported} onDownload={()=>void handleBatchDownload()} onClear={()=>setSelectedIds(new Set())} />
       {/* Player Bar */}
-      <AnimatePresence>
+
         {activeMusic && (
           <PlayerBar 
             currentMusic={activeMusic}
@@ -1080,13 +421,13 @@ export default function Home() {
             onSeek={handleSeek}
             volume={volume}
             onVolumeChange={setVolume}
-            onOpenPlayer={openPlayerDrawer}
+            onOpenPlayer={() => setPlayerDrawerOpen(true)}
           />
         )}
-      </AnimatePresence>
+
 
       <FullscreenPlayerDrawer
-        key={`${activeMusic?.id || "empty"}-${playerDrawerSession}`}
+        key={activeMusic ? `${activeMusic.provider}:${activeMusic.id}` : "empty"}
         isOpen={playerDrawerOpen}
         music={activeMusic}
         isPlaying={playing}
@@ -1100,6 +441,5 @@ export default function Home() {
         onNext={canNext ? handleNext : undefined}
         onSeek={handleSeek}
       />
-    </main>
-  );
+  </main>;
 }

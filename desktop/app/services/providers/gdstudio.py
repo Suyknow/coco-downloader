@@ -9,7 +9,7 @@ from urllib.parse import urljoin, urlparse
 from app.models.music import LyricData, MusicItem, PlayInfo
 from .base import MusicProvider
 from .gdstudio_signature import HOST, signature
-from .netease_official import NeteaseOfficialProvider
+from app.services.lyrics import NeteaseLyrics
 
 BASE_URL = f"https://{HOST}"
 QUALITY_OPTIONS = [
@@ -130,4 +130,4 @@ class GDStudioProvider(MusicProvider):
         )
 
     def get_lyric(self, song_id: str, extra: dict[str, Any] | None = None) -> LyricData:
-        return replace(NeteaseOfficialProvider().get_lyric(song_id, extra), provider=self.name)
+        return replace(NeteaseLyrics().get_lyric(song_id, extra), provider=self.name)

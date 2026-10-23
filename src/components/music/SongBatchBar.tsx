@@ -1,17 +1,20 @@
 "use client";
 
 import { AnimatePresence, motion } from "framer-motion";
-import { useEffect, useState } from "react";
+import { useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { Download, Loader2, Trash2 } from "lucide-react";
 import { SelectMenu } from "../SelectMenu";
+
+const subscribe = () => () => {};
+const clientSnapshot = () => true;
+const serverSnapshot = () => false;
 
 export function SongBatchBar({ count, busy = 0, supported = true, onDownload, onClear, quality, qualityOptions, onQualityChange }: {
   count: number; busy?: number; supported?: boolean; onDownload: () => void; onClear: () => void;
   quality?: string; qualityOptions?: Array<{ value: string; label: string }>; onQualityChange?: (value: string) => void;
 }) {
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => { setMounted(true); }, []);
+  const mounted = useSyncExternalStore(subscribe, clientSnapshot, serverSnapshot);
   if (!mounted) return null;
   return createPortal(<AnimatePresence>{count > 0 && <motion.div initial={{ y: 100, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 100, opacity: 0 }} className="pointer-events-none fixed bottom-24 left-0 right-0 z-40 flex justify-center px-3">
     <div className="pointer-events-auto flex flex-wrap items-center justify-center gap-3 rounded-3xl bg-[#303030]/95 px-5 py-3 text-[#f3f0ef] shadow-[0_8px_24px_rgba(0,0,0,0.08)] backdrop-blur-xl sm:gap-6 sm:rounded-full">

@@ -1,18 +1,16 @@
+from urllib.parse import urlencode, urljoin, urlparse, parse_qsl, urlunparse
 # coding: utf-8
 import json
 import re
 import time
 import unicodedata
-from dataclasses import replace
 from typing import Any
-from urllib.parse import urlencode, urljoin, urlparse, parse_qsl, urlunparse
 
 import requests
 from bs4 import BeautifulSoup
 
 from app.models.music import LyricData, MusicItem, PlayInfo
 from .base import MusicProvider
-from .bodian import BodianProvider
 from .http_client import ProviderHttpClient
 from .utils import parse_lrc_lines, validate_audio_url
 
@@ -163,19 +161,6 @@ class GequkeProvider(MusicProvider):
     def get_lyric(self, song_id: str, extra: dict[str, Any] | None = None) -> LyricData:
         with _Session() as session:
             html = session.request(_song_path(song_id))
-        title, artist = _value(html, "mp3_title"), _value(html, "mp3_author")
-        try:
-            official = BodianProvider()
-            names = {_normalized(name) for name in re.split(r"[/、,，&;；]", artist) if name.strip()}
-            for candidate in official.search(title, 30):
-                singers = {_normalized(name) for name in re.split(r"[/、,，&;；]", candidate.artist)}
-                if _normalized(candidate.title) == _normalized(title) and names & singers:
-                    lyric = official.get_lyric(candidate.id)
-                    if lyric.lrc or lyric.lines:
-                        return replace(lyric, songid=song_id, provider=self.name)
-                    break
-        except Exception:
-            pass
         node = BeautifulSoup(html, "html.parser").select_one("#content-lrc2")
         lrc = node.get_text().strip() if node else ""
         return LyricData(song_id, self.name, parse_lrc_lines(lrc), lrc)

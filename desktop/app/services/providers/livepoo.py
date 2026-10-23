@@ -67,11 +67,16 @@ class LivepooProvider(MusicProvider):
             )
         except RequestException:
             LOGGER.exception("Livepoo search error")
-            return []
+            raise
         return self._parse_search_html(html)[offset:offset + limit]
 
     def get_play_info(self, song_id: str, extra: dict[str, Any] | None = None) -> PlayInfo:
-        raise ValueError("力音已改为网盘下载，请前往源站保存，不支持直接试听或自动下载")
+        url = self.get_download_page(song_id)
+        html = self._http.get_text(url, headers={"User-Agent": "Mozilla/5.0", "Referer": "https://www.livepoo.cn/"},
+                                   timeout=REQUEST_TIMEOUT)
+        if not re.search(r"https?://pan\.quark\.cn/s/", html.replace("\\/", "/")):
+            raise ValueError("力音暂未提供网盘下载入口")
+        return PlayInfo(url=url, type="", delivery="source-page")
 
     def get_download_page(self, song_id: str) -> str:
         if not song_id.isdigit():

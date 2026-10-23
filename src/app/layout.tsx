@@ -3,7 +3,6 @@ import "./globals.css";
 import { Navbar } from "@/components/Navbar";
 import { ThemeProvider } from "@/components/ThemeProvider";
 import { ErrorNotifications } from "@/components/ErrorNotifications";
-import { DiscoveryModeProvider } from "@/components/DiscoveryMode";
 
 export const metadata: Metadata = {
   title: "COCO音乐下载站",
@@ -29,13 +28,11 @@ export default function RootLayout({
           enableSystem
           disableTransitionOnChange
         >
-          <DiscoveryModeProvider>
           <div className="sticky top-0 z-[60] w-full flex flex-col">
             <Navbar />
           </div>
           <div className="min-h-screen">{children}</div>
           <ErrorNotifications />
-          </DiscoveryModeProvider>
         </ThemeProvider>
       </body>
     </html>

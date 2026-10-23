@@ -24,7 +24,7 @@ from app.services.download_service import DownloadTaskInfo, DownloadTaskStatus
 from app.services.remote_asset import get_remote_asset
 from app.services.thread_lifecycle import retain_thread
 
-DEFAULT_COVER = ":/app/images/play_bar/album_200_200.png"
+DEFAULT_COVER = ":/app/images/logo/CocoDownloader.png"
 COVER_TIMEOUT = 10
 COVER_HEADERS = {
     "User-Agent": (

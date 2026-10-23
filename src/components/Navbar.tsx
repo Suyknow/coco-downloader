@@ -7,13 +7,11 @@ import { useState, MouseEvent } from "react";
 import { useTheme } from "next-themes";
 import DeveloperPanel from "./DeveloperPanel";
 import { DonationModal } from "./DonationModal";
-import { ModeSwitch, useDiscoveryMode } from "./DiscoveryMode";
 import localFont from "next/font/local";
 
 const geo = localFont({ src: "../../public/fonts/geo/Geo-Regular.ttf", display: "swap" });
 
 export function Navbar() {
-  const { discovery, setSearchSlot } = useDiscoveryMode();
   const [showDevPanel, setShowDevPanel] = useState(false);
   const [showDonation, setShowDonation] = useState(false);
   const { theme, setTheme, resolvedTheme } = useTheme();
@@ -61,15 +59,13 @@ export function Navbar() {
 
   return (
     <>
-      <nav className={`coco-navbar ${discovery ? "is-discovery" : ""} bg-white/90 dark:bg-[#17191c]/95 backdrop-blur-md border-b border-black/5 dark:border-white/10 z-50 px-4 md:px-8 transition-colors duration-300`}>
+      <nav className={`coco-navbar  bg-white/90 dark:bg-[#17191c]/95 backdrop-blur-md border-b border-black/5 dark:border-white/10 z-50 px-4 md:px-8 transition-colors duration-300`}>
         <Link href="/" className="group flex items-center gap-3">
           <Image src="/images/coco-downloader.svg" alt="CoCo Downloader" width={40} height={40} className="h-10 w-10 transition-transform group-hover:scale-105" />
           <span className={`${geo.className} hidden text-[28px] leading-none tracking-normal text-[#005faa] dark:text-[#a3c9ff] sm:inline`}>
             CoCo Downloader
           </span>
         </Link>
-        <div ref={setSearchSlot} className="nav-search-slot" />
-        <div className="nav-mode"><ModeSwitch /></div>
         
         <div className="flex items-center gap-2">
           <a

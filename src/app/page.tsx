@@ -15,6 +15,8 @@ import { PlayerBar } from '@/components/PlayerBar';
 import { FullscreenPlayerDrawer } from '@/components/FullscreenPlayerDrawer';
 import { useWebPlayer } from '@/hooks/useWebPlayer';
 import type { MusicItem } from "@/types/music";
+import { useDownloadTasks } from "@/hooks/useDownloadTasks";
+import { isDownloadHistory } from "@/lib/download-history";
 import type { DownloadTask } from "@/types/download";
 async function fetchJson(url: string) {
   const response = await fetch(url, { signal: AbortSignal.timeout(35000) });
@@ -121,7 +123,7 @@ export default function Home() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [searched, setSearched] = useState(false);
   const [hasMoreResults, setHasMoreResults] = useState(false);
-  const [downloadTasks, setDownloadTasks] = useState<DownloadTask[]>([]);
+  const [downloadTasks, setDownloadTasks] = useDownloadTasks();
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [downloadingCount, setDownloadingCount] = useState(0);
   const [qualityModal, setQualityModal] = useState<QualityModalState | null>(null);
@@ -168,7 +170,7 @@ export default function Home() {
     try {
       const downloadItem = task.musicItem;
         // Update status to downloading
-        setDownloadTasks(prev => prev.map(t => 
+        setDownloadTasks(prev => prev.map(t =>
           t.id === task.id ? { ...t, status: 'downloading', notice: undefined } : t
         ));
 
@@ -226,7 +228,7 @@ export default function Home() {
         document.body.removeChild(link);
         setTimeout(() => window.URL.revokeObjectURL(url), 60000);
 
-        setDownloadTasks(prev => prev.map(t => 
+        setDownloadTasks(prev => prev.map(t =>
           t.id === task.id ? { ...t, fileName, status: 'completed', progress: 100, notice: undefined, error: undefined } : t
         ));
     } catch (err: unknown) {
@@ -234,7 +236,7 @@ export default function Home() {
       console.error(err);
       const errorMessage = err instanceof Error ? err.message : '下载失败';
       void message.error({ key: `download-${task.id}`, content: `${task.musicItem.title}：${errorMessage}`, duration: 6 });
-      setDownloadTasks(prev => prev.map(t => 
+      setDownloadTasks(prev => prev.map(t =>
         t.id === task.id ? { ...t, status: 'error', error: errorMessage } : t
       ));
     }
@@ -401,7 +403,7 @@ export default function Home() {
         {hasMoreResults && <div className="mt-6 text-center"><button className="cursor-pointer rounded-full border px-6 py-2" disabled={loadingMore} onClick={() => void handleLoadMore()}>{loadingMore ? '加载中…' : '加载更多'}</button></div>}
       </> : searched ? <p className="py-16 text-center text-slate-500">未找到相关歌曲，请更换关键词或渠道。</p> : null}
     </div>
-    <DownloadDrawer isOpen={isDrawerOpen} onOpen={()=>setIsDrawerOpen(true)} onClose={()=>setIsDrawerOpen(false)} tasks={downloadTasks} onBrowserHandoff={id=>setDownloadTasks(prev=>prev.map(t=>t.id===id?{...t,status:'handed-off'}:t))} onRemoveTask={id=>setDownloadTasks(prev=>prev.filter(t=>t.id!==id))} onClearCompleted={()=>setDownloadTasks(prev=>prev.filter(t=>t.status==='downloading'||t.status==='pending'))} />
+    <DownloadDrawer isOpen={isDrawerOpen} onOpen={()=>setIsDrawerOpen(true)} onClose={()=>setIsDrawerOpen(false)} tasks={downloadTasks} onBrowserHandoff={id=>setDownloadTasks(prev=>prev.map(t=>t.id===id?{...t,status:'handed-off'}:t))} onRemoveTask={id=>setDownloadTasks(prev=>prev.filter(t=>t.id!==id))} onClearCompleted={()=>setDownloadTasks(prev=>prev.filter(t=>!isDownloadHistory(t)))} />
     <QualitySelectModal isOpen={Boolean(qualityModal)} title="选择下载音质" description="实际音质以渠道返回文件为准。" options={qualityModal ? collectQualityOptions(getQualityItems(qualityModal.items)) : []} value={selectedQualityValue} onChange={setSelectedQualityValue} onClose={()=>setQualityModal(null)} onConfirm={()=>void confirmQualityDownload()} />
     <SongBatchBar count={selectedIds.size} busy={downloadingCount} supported={batchSupported} onDownload={()=>void handleBatchDownload()} onClear={()=>setSelectedIds(new Set())} />
       {/* Player Bar */}

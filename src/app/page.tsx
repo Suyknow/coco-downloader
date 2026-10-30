@@ -1,11 +1,14 @@
 "use client";
-import React, { useRef, useState } from "react";
-import { Download, ListChecks, Loader2, Music, Play } from "lucide-react";
+import React, { useEffect, useRef, useState } from "react";
+import { Download, Heart, ListChecks, Loader2, Music, Play, X } from "lucide-react";
 import { message } from "antd";
 import { SearchField } from "@/components/SearchField";
 import { ChannelSelect } from "@/components/ChannelSelect";
 import { SongList, SongRowActions, SongListToolbar, SongActionButton } from "@/components/music/SongList";
 import { SongBatchBar } from "@/components/music/SongBatchBar";
+import { PlaylistDrawer } from "@/components/PlaylistDrawer";
+import { readSearchHistory, readSearchProvider, readPlaylist, savePreference, saveSearchProvider, samePlaylistSong } from "@/lib/search-preferences";
+import { MUSIC_PLATFORMS } from "@/lib/music-channels";
 import { DownloadDrawer } from "@/components/DownloadDrawer";
 import { BrowserDownloadNotice } from "@/components/BrowserDownloadNotice";
 import { QualitySelectModal } from "@/components/QualitySelectModal";
@@ -115,7 +118,41 @@ function getProviderExtra(item: MusicItem): ProviderExtra | undefined {
 export default function Home() {
   const { activeMusic, playing, resolvingMusicId, currentTime, duration, volume, playMode, lyricLines, lyricLoading, playerDrawerOpen, setPlayerDrawerOpen, handlePlay, handleSeek, setVolume, togglePlayMode, canPrev, canNext, handlePrev, handleNext } = useWebPlayer();
   const [query, setQuery] = useState("");
+  const [searchHistory, setSearchHistory] = useState<string[]>([]);
+  const [searchFocused, setSearchFocused] = useState(false);
+  const [playlist, setPlaylist] = useState<MusicItem[]>([]);
+  const [isPlaylistOpen, setIsPlaylistOpen] = useState(false);
+  const [preferencesReady, setPreferencesReady] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled) return;
+      setSearchHistory(readSearchHistory());
+      setProvider(readSearchProvider(MUSIC_PLATFORMS.flatMap(platform => platform.channels.map(channel => channel.id)), "gdstudio-netease"));
+      setPlaylist(readPlaylist());
+      setPreferencesReady(true);
+    });
+    return () => { cancelled = true; };
+  }, []);
+  useEffect(() => {
+    if (preferencesReady) savePreference('coco-search-history', searchHistory);
+  }, [searchHistory, preferencesReady]);
+  useEffect(() => {
+    if (preferencesReady) savePreference('coco-playlist', playlist);
+  }, [playlist, preferencesReady]);
+  useEffect(() => {
+    const toggle = () => setIsPlaylistOpen(open => !open);
+    window.addEventListener('toggle-playlist', toggle);
+    return () => window.removeEventListener('toggle-playlist', toggle);
+  }, []);
+  const addToPlaylist = (item: MusicItem) => setPlaylist(previous =>
+    previous.some(song => samePlaylistSong(song, item)) ? previous : [...previous, item]);
+  const removeFromPlaylist = (item: MusicItem) => setPlaylist(previous =>
+    previous.filter(song => !samePlaylistSong(song, item)));
   const [provider, setProvider] = useState("gdstudio-netease");
+  useEffect(() => {
+    if (preferencesReady) saveSearchProvider(provider);
+  }, [provider, preferencesReady]);
   const [results, setResults] = useState<MusicItem[]>([]);
   const [resultFilter, setResultFilter] = useState("");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -138,20 +175,26 @@ export default function Home() {
     setProvider(id); setResults([]); setSelectedIds(new Set());
     setHasMoreResults(false); setSearched(false); setResultFilter("");
   };
-  const fetchSearchPage = async (offset: number) => {
-    const data = await fetchJson(`/api/search?${new URLSearchParams({q:query.trim(),provider,limit:"20",offset:String(offset)})}`);
+  const fetchSearchPage = async (offset: number, searchQuery = query) => {
+    const data = await fetchJson(`/api/search?${new URLSearchParams({q:searchQuery.trim(),provider,limit:"20",offset:String(offset)})}`);
     return (Array.isArray(data.items) ? data.items : []) as MusicItem[];
   };
-  const handleSearch = async (event: React.FormEvent) => {
-    event.preventDefault();
-    if (!query.trim() || loading) return;
+  const performSearch = async (searchQuery: string) => {
+    searchQuery = searchQuery.trim();
+    if (!searchQuery || loading) return;
+    setQuery(searchQuery);
+    setSearchHistory(previous => [searchQuery, ...previous.filter(term => term !== searchQuery)].slice(0, 100));
     const id = ++requestId.current;
     setLoading(true); setSearched(true); setResults([]); setSelectedIds(new Set()); setResultFilter(""); setHasMoreResults(false);
     try {
-      const items = await fetchSearchPage(0);
+      const items = await fetchSearchPage(0, searchQuery);
       if (id === requestId.current) { setResults(items); setHasMoreResults(items.length === 20); }
     } catch (error) { notifyError(error, "搜索失败，请重试或切换渠道"); }
     finally { setLoading(false); }
+  };
+  const handleSearch = async (event: React.FormEvent) => {
+    event.preventDefault();
+    await performSearch(query);
   };
   const handleLoadMore = async () => {
     if (loading || loadingMore || !hasMoreResults) return;
@@ -388,7 +431,18 @@ export default function Home() {
         <Music size={48} className="text-[#005faa] dark:text-[#a3c9ff]" />
         <h1 className="text-3xl font-bold">COCO音乐下载站</h1>
         <p className="text-center text-sm text-slate-500">选择渠道搜索歌曲，支持单曲和批量下载。渠道可用性以实际返回为准。</p>
-        <SearchField value={query} onChange={setQuery} onSubmit={handleSearch} placeholder="输入歌曲名、歌手或专辑" label="搜索歌曲" busy={loading} prefix={<ChannelSelect value={provider} onChange={changeChannel} disabled={loading || loadingMore} />} />
+        <SearchField onFocus={() => setSearchFocused(true)} value={query} onChange={setQuery} onSubmit={handleSearch} placeholder="输入歌曲名、歌手或专辑" label="搜索歌曲" busy={loading} prefix={<ChannelSelect value={provider} onChange={changeChannel} disabled={loading || loadingMore} />} />
+        {searchFocused && searchHistory.length > 0 && <div className="flex w-full flex-wrap items-center gap-2 text-xs" role="group" aria-label="搜索历史">
+          <span className="mr-1 font-medium text-[#404752] dark:text-[#c6c6c7]">搜索历史:</span>
+          {searchHistory.slice(0, 5).map(term => <div key={term} className="flex items-center rounded-full bg-[#f0eded] dark:bg-[#242526]">
+            <button type="button" disabled={loading} onClick={() => void performSearch(term)} className="cursor-pointer py-1.5 pl-3 pr-1 disabled:opacity-50">{term}</button>
+            <button type="button" aria-label={`删除搜索历史：${term}`} onClick={() => setSearchHistory(previous => previous.filter(value => value !== term))} className="cursor-pointer p-1.5 hover:text-[#ba1a1a]"><X size={12} /></button>
+          </div>)}
+        </div>}
+        {!searched && !searchFocused && <div className="flex flex-wrap items-center justify-center gap-2 text-xs text-[#404752] dark:text-[#c6c6c7]">
+          <span>热门推荐:</span>
+          {["周杰伦", "林俊杰", "陈奕迅", "孙燕姿"].map(term => <button type="button" key={term} disabled={loading} onClick={() => void performSearch(term)} className="cursor-pointer rounded-full bg-[#f0eded] px-3 py-1.5 dark:bg-[#242526]">{term}</button>)}
+        </div>}
         {activeChannel && <p className="text-sm text-slate-500">{activePlatform?.name} / {activeChannel.name} · {activeChannel.description}</p>}
         {activeChannel?.download === 'browser' && <BrowserDownloadNotice />}
       </header>
@@ -399,11 +453,14 @@ export default function Home() {
           <SongActionButton primary disabled={!selectedIds.size || downloadingCount > 0 || !batchSupported} onClick={() => void handleBatchDownload()}><Download size={16} />下载所选 {selectedIds.size || ""}</SongActionButton>
           <SongActionButton onClick={toggleAll}><ListChecks size={16} />选择当前列表</SongActionButton>
         </SongListToolbar>
-        <SongList activeMusic={activeMusic} playing={playing} resolvingId={resolvingMusicId} onPlay={item => void handlePlay(item, visibleResults)} items={visibleResults} selectedIds={selectedIds} onToggle={toggleSelection} onToggleAll={toggleAll} renderActions={item => <SongRowActions onPlay={() => void handlePlay(item, visibleResults)} playing={activeMusic?.id === item.id && activeMusic?.provider === item.provider && playing} resolving={resolvingMusicId === item.id} previewDisabled={getMusicChannel(item.provider)?.preview === false} item={item} selected={selectedIds.has(item.id)} onToggleSelection={() => toggleSelection(item.id)} onDownload={() => void requestDownloadOne(item)} downloadLabel={getMusicChannel(item.provider)?.download === 'source-page' ? '前往源站下载' : '下载'} />} />
+        <SongList activeMusic={activeMusic} playing={playing} resolvingId={resolvingMusicId} onPlay={item => void handlePlay(item, visibleResults)} items={visibleResults} selectedIds={selectedIds} onToggle={toggleSelection} onToggleAll={toggleAll} renderActions={item => <SongRowActions onPlay={() => void handlePlay(item, visibleResults)} playing={activeMusic?.id === item.id && activeMusic?.provider === item.provider && playing} resolving={resolvingMusicId === item.id} previewDisabled={getMusicChannel(item.provider)?.preview === false} item={item} selected={selectedIds.has(item.id)} onToggleSelection={() => toggleSelection(item.id)} onDownload={() => void requestDownloadOne(item)} downloadLabel={getMusicChannel(item.provider)?.download === 'source-page' ? '前往源站下载' : '下载'}>
+          <button type="button" onClick={() => addToPlaylist(item)} aria-label={playlist.some(song => samePlaylistSong(song, item)) ? '已加入歌单' : '添加到歌单'} title="添加到歌单"><Heart size={22} className={playlist.some(song => samePlaylistSong(song, item)) ? 'fill-current text-rose-500' : ''} /></button>
+        </SongRowActions>} />
         {hasMoreResults && <div className="mt-6 text-center"><button className="cursor-pointer rounded-full border px-6 py-2" disabled={loadingMore} onClick={() => void handleLoadMore()}>{loadingMore ? '加载中…' : '加载更多'}</button></div>}
       </> : searched ? <p className="py-16 text-center text-slate-500">未找到相关歌曲，请更换关键词或渠道。</p> : null}
     </div>
     <DownloadDrawer isOpen={isDrawerOpen} onOpen={()=>setIsDrawerOpen(true)} onClose={()=>setIsDrawerOpen(false)} tasks={downloadTasks} onBrowserHandoff={id=>setDownloadTasks(prev=>prev.map(t=>t.id===id?{...t,status:'handed-off'}:t))} onRemoveTask={id=>setDownloadTasks(prev=>prev.filter(t=>t.id!==id))} onClearCompleted={()=>setDownloadTasks(prev=>prev.filter(t=>!isDownloadHistory(t)))} />
+    <PlaylistDrawer isOpen={isPlaylistOpen} onClose={() => setIsPlaylistOpen(false)} items={playlist} onPlay={item => void handlePlay(item, playlist)} onRemove={removeFromPlaylist} />
     <QualitySelectModal isOpen={Boolean(qualityModal)} title="选择下载音质" description="实际音质以渠道返回文件为准。" options={qualityModal ? collectQualityOptions(getQualityItems(qualityModal.items)) : []} value={selectedQualityValue} onChange={setSelectedQualityValue} onClose={()=>setQualityModal(null)} onConfirm={()=>void confirmQualityDownload()} />
     <SongBatchBar count={selectedIds.size} busy={downloadingCount} supported={batchSupported} onDownload={()=>void handleBatchDownload()} onClear={()=>setSelectedIds(new Set())} />
       {/* Player Bar */}

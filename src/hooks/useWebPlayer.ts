@@ -5,6 +5,7 @@ import { message } from 'antd';
 import type { MusicItem } from '@/types/music';
 import { getMusicChannel } from '@/lib/music-channels';
 import { adjacentIndex, queueOrder, type PlayMode } from '@/lib/player-queue';
+import { installPlaybackShortcut } from '@/lib/playback-shortcut';
 
 type LyricLine = { time: number; text: string };
 const sameSong = (a: MusicItem | null, b: MusicItem) => a?.id === b.id && a.provider === b.provider;
@@ -55,7 +56,11 @@ export function useWebPlayer() {
     const state = session.current;
     if (!restart && sameSong(state.item, item) && audio.src && !state.resolving) {
       if (!audio.paused) { audio.pause(); return; }
-      try { await audio.play(); } catch { void message.error('播放失败，请重试'); }
+      try { await audio.play(); } catch {
+        audio.pause();
+        setPlaying(false);
+        void message.error('播放失败，请重试');
+      }
       return;
     }
     pending.current?.abort();
@@ -101,6 +106,15 @@ export function useWebPlayer() {
       if (!controller.signal.aborted && token === request.current) { state.resolving = false; setResolvingMusicId(null); }
     }
   }, [syncNavigation, loadLyrics]);
+
+  useEffect(() => installPlaybackShortcut(
+    document,
+    () => Boolean(session.current.item && !session.current.resolving),
+    () => {
+      const item = session.current.item;
+      if (item) void handlePlay(item);
+    },
+  ), [handlePlay]);
 
   const navigate = useCallback((direction: 1 | -1) => {
     const state = session.current;
